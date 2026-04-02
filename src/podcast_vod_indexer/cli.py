@@ -21,6 +21,9 @@ from podcast_vod_indexer.export import export_matches_html
 import time
 
 
+MATCH_CONFIDENCE_CUTOFF = 0.15
+
+
 def process_source(conn, source_url: str, kind: str, limit: int) -> None:
     videos = get_latest_videos(source_url, limit=limit)
 
@@ -114,7 +117,7 @@ def fetch_missing_transcripts_with_budget(
         except TranscriptRateLimitError:
             print(
                 "  -> transcript rate limit hit, stopping"
-                "transcript fetches for this run"
+                " transcript fetches for this run"
                 )
             conn.commit()
             return
@@ -156,7 +159,11 @@ def run_matching(conn) -> None:
                 best_vod_id = vod_id
                 best_window_start = match["start"]
 
-        if best_vod_id is not None and best_window_start is not None:
+        if (
+            best_vod_id is not None
+            and best_window_start is not None
+            and best_score >= MATCH_CONFIDENCE_CUTOFF
+        ):
             upsert_match(
                 conn,
                 episode_video_id=episode_id,
@@ -165,6 +172,11 @@ def run_matching(conn) -> None:
                 confidence=best_score,
             )
             conn.commit()
+            print(f"  -> stored match ({best_score * 100:.2f}%)")
+        else:
+            print(
+                f"  -> no match stored (best score: {best_score * 100:.2f}%)"
+                )
 
 
 def main() -> None:
