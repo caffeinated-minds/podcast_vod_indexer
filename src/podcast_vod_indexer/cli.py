@@ -5,12 +5,16 @@ from podcast_vod_indexer.db import (
     insert_segments,
     get_video_id_by_youtube_id,
     get_videos_without_segments_by_kind,
+    get_videos_with_segments_by_kind,
+    get_segments_for_video,
+    upsert_match,
 )
 from podcast_vod_indexer.youtube import (
     get_latest_videos,
     get_video_info,
     get_transcript_segments,
 )
+from podcast_vod_indexer.matching import find_best_window_match
 
 import time
 
@@ -101,6 +105,48 @@ def fetch_missing_transcripts_with_budget(
             time.sleep(20)
 
 
+def run_matching(conn) -> None:
+    episodes = get_videos_with_segments_by_kind(conn, "episode")
+    vods = get_videos_with_segments_by_kind(conn, "vod")
+
+    for episode_id, _, episode_title in episodes:
+        episode_segments = get_segments_for_video(conn, episode_id)
+
+        best_vod_id = None
+        best_score = -1.0
+        best_window_start = None
+
+        print(f"[match] Episode: {episode_title}")
+
+        for vod_id, _, vod_title in vods:
+            vod_segments = get_segments_for_video(conn, vod_id)
+
+            match = find_best_window_match(
+                episode_segments,
+                vod_segments,
+                window_seconds=900.0,
+                step_seconds=300.0,
+            )
+
+            if match is None:
+                continue
+
+            if match["score"] > best_score:
+                best_score = match["score"]
+                best_vod_id = vod_id
+                best_window_start = match["start"]
+
+        if best_vod_id is not None and best_window_start is not None:
+            upsert_match(
+                conn,
+                episode_video_id=episode_id,
+                vod_video_id=best_vod_id,
+                matched_start_seconds=best_window_start,
+                confidence=best_score,
+            )
+            conn.commit()
+
+
 def main() -> None:
     vod_source_url = "https://www.youtube.com/@ThePrimeTimeagen/streams"
     episode_source_url = (
@@ -119,6 +165,8 @@ def main() -> None:
             vod_limit=9,
             episode_limit=1,
         )
+
+        run_matching(conn)
 
         conn.commit()
 

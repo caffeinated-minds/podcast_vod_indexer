@@ -176,6 +176,27 @@ def get_videos_without_segments_by_kind(
     return rows
 
 
+def get_videos_with_segments_by_kind(
+    conn, kind: str
+) -> list[tuple[int, str, str]]:
+    rows = conn.execute(
+        """
+        SELECT v.id, v.youtube_id, v.title
+        FROM videos v
+        WHERE v.kind = ?
+          AND EXISTS (
+              SELECT 1
+              FROM segments s
+              WHERE s.video_id = v.id
+          )
+        ORDER BY v.upload_date DESC
+        """,
+        (kind,),
+    ).fetchall()
+
+    return rows
+
+
 def upsert_match(
     conn,
     episode_video_id: int,

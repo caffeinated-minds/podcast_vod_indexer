@@ -10,7 +10,6 @@ import json
 import subprocess
 import xml.etree.ElementTree as ET
 import yt_dlp
-import time
 
 
 YDL_OPTS = {
@@ -136,17 +135,13 @@ def parse_json3_captions(data: dict[str, Any]) -> list[dict[str, object]]:
 
 
 def _download_json_track(track_url: str) -> dict:
-    delays = [2, 5, 15]
-
-    for attempt, delay in enumerate(delays, start=1):
-        try:
-            with urlopen(track_url) as response:
-                return json.loads(response.read().decode("utf-8"))
-        except HTTPError as e:
-            if e.code == 429 and attempt < len(delays):
-                time.sleep(delay)
-                continue
+    try:
+        with urlopen(track_url) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except HTTPError as e:
+        if e.code == 429:
             raise
+        raise
 
 
 def get_transcript_segments(video_url: str) -> list[dict[str, object]]:
