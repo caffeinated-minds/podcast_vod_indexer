@@ -12,6 +12,10 @@ import xml.etree.ElementTree as ET
 import yt_dlp
 
 
+class TranscriptRateLimitError(Exception):
+    pass
+
+
 YDL_OPTS = {
     "quiet": True,
 }
@@ -140,7 +144,9 @@ def _download_json_track(track_url: str) -> dict:
             return json.loads(response.read().decode("utf-8"))
     except HTTPError as e:
         if e.code == 429:
-            raise
+            raise TranscriptRateLimitError(
+                "YouTube transcript rate limit hit."
+                ) from e
         raise
 
 

@@ -13,6 +13,7 @@ from podcast_vod_indexer.youtube import (
     get_latest_videos,
     get_video_info,
     get_transcript_segments,
+    TranscriptRateLimitError,
 )
 from podcast_vod_indexer.matching import find_best_window_match
 
@@ -50,6 +51,7 @@ def fetch_missing_transcripts_with_budget(
         limit=50,
     )
 
+    """ EPISODES """
     episode_successes = 0
     for video_id, _, video_url in episode_videos:
         if episode_successes >= episode_limit:
@@ -69,6 +71,14 @@ def fetch_missing_transcripts_with_budget(
             time.sleep(5)
             episode_successes += 1
 
+        except TranscriptRateLimitError:
+            print(
+                " -> transcript rate limit hit, stopping"
+                " transcript fetches for this run"
+            )
+            conn.commit()
+            return
+
         except Exception as e:
             print(f"  -> transcript fetch failed, skipping: {e}")
             conn.commit()
@@ -80,6 +90,7 @@ def fetch_missing_transcripts_with_budget(
         limit=200,
     )
 
+    """Live VODs"""
     vod_successes = 0
     for video_id, _, video_url in vod_videos:
         if vod_successes >= vod_limit:
@@ -98,6 +109,14 @@ def fetch_missing_transcripts_with_budget(
             conn.commit()
             time.sleep(5)
             vod_successes += 1
+
+        except TranscriptRateLimitError:
+            print(
+                "  -> transcript rate limit hit, stopping"
+                "transcript fetches for this run"
+                )
+            conn.commit()
+            return
 
         except Exception as e:
             print(f"  -> transcript fetch failed, skipping: {e}")
