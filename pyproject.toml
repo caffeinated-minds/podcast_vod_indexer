@@ -1,0 +1,20 @@
+[project]
+name = "podcast-vod-indexer"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Caffeinated Minds" }
+]
+requires-python = ">=3.10"
+dependencies = [
+    "secretstorage>=3.5.0",
+    "yt-dlp>=2026.3.17",
+]
+
+[project.scripts]
+podcast-vod-indexer = "podcast_vod_indexer.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.9.29,<0.10.0"]
+build-backend = "uv_build"
