@@ -16,6 +16,7 @@ from podcast_vod_indexer.youtube import (
     TranscriptRateLimitError,
 )
 from podcast_vod_indexer.matching import find_best_window_match
+from podcast_vod_indexer.export import export_matches_html
 
 import time
 
@@ -186,6 +187,7 @@ def main() -> None:
         )
 
         run_matching(conn)
+        export_matches_html(conn)
 
         conn.commit()
 
