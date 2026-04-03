@@ -55,39 +55,6 @@ def fetch_missing_transcripts_with_budget(
         limit=50,
     )
 
-    """ EPISODES """
-    episode_successes = 0
-    for video_id, _, video_url in episode_videos:
-        if episode_successes >= episode_limit:
-            break
-
-        print(f"[episode] Fetching transcript: {video_url}")
-
-        try:
-            segments = get_transcript_segments(video_url)
-
-            if not segments:
-                print("  -> no transcript, skipping")
-                continue
-
-            insert_segments(conn, video_id, segments)
-            conn.commit()
-            time.sleep(5)
-            episode_successes += 1
-
-        except TranscriptRateLimitError:
-            print(
-                " -> transcript rate limit hit, stopping"
-                " transcript fetches for this run"
-            )
-            conn.commit()
-            return
-
-        except Exception as e:
-            print(f"  -> transcript fetch failed, skipping: {e}")
-            conn.commit()
-            time.sleep(20)
-
     vod_videos = get_videos_without_segments_by_kind(
         conn,
         kind="vod",
@@ -119,6 +86,39 @@ def fetch_missing_transcripts_with_budget(
                 "  -> transcript rate limit hit, stopping"
                 " transcript fetches for this run"
                 )
+            conn.commit()
+            return
+
+        except Exception as e:
+            print(f"  -> transcript fetch failed, skipping: {e}")
+            conn.commit()
+            time.sleep(20)
+
+    """ EPISODES """
+    episode_successes = 0
+    for video_id, _, video_url in episode_videos:
+        if episode_successes >= episode_limit:
+            break
+
+        print(f"[episode] Fetching transcript: {video_url}")
+
+        try:
+            segments = get_transcript_segments(video_url)
+
+            if not segments:
+                print("  -> no transcript, skipping")
+                continue
+
+            insert_segments(conn, video_id, segments)
+            conn.commit()
+            time.sleep(5)
+            episode_successes += 1
+
+        except TranscriptRateLimitError:
+            print(
+                " -> transcript rate limit hit, stopping"
+                " transcript fetches for this run"
+            )
             conn.commit()
             return
 
@@ -189,8 +189,8 @@ def main() -> None:
     init_db()
 
     with get_connection() as conn:
-        process_source(conn, vod_source_url, kind="vod", limit=50)
-        process_source(conn, episode_source_url, kind="episode", limit=5)
+        process_source(conn, vod_source_url, kind="vod", limit=100)
+        process_source(conn, episode_source_url, kind="episode", limit=10)
 
         fetch_missing_transcripts_with_budget(
             conn,
