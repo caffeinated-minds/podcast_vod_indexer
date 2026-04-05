@@ -159,11 +159,7 @@ def run_matching(conn) -> None:
                 best_vod_id = vod_id
                 best_window_start = match["start"]
 
-        if (
-            best_vod_id is not None
-            and best_window_start is not None
-            and best_score >= MATCH_CONFIDENCE_CUTOFF
-        ):
+        if best_vod_id is not None and best_window_start is not None:
             upsert_match(
                 conn,
                 episode_video_id=episode_id,
@@ -172,11 +168,16 @@ def run_matching(conn) -> None:
                 confidence=best_score,
             )
             conn.commit()
-            print(f"  -> stored match ({best_score * 100:.2f}%)")
-        else:
-            print(
-                f"  -> no match stored (best score: {best_score * 100:.2f}%)"
+
+            if best_score >= MATCH_CONFIDENCE_CUTOFF:
+                print(f"  -> stored match ({best_score * 100:.2f}%)")
+            else:
+                print(
+                    f"  -> stored low-confidence candidate "
+                    f"({best_score * 100:.2f}%)"
                 )
+        else:
+            print("  -> no candidate found")
 
 
 def main() -> None:

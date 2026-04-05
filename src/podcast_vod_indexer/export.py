@@ -18,9 +18,21 @@ def export_matches_html(conn: sqlite3.Connection) -> None:
             v.upload_date,
             m.matched_start_seconds,
             m.confidence
-        FROM matches m
-        JOIN videos e ON e.id = m.episode_video_id
-        JOIN videos v ON v.id = m.vod_video_id
+        FROM videos e
+        JOIN segments s ON s.video_id = e.id
+        LEFT JOIN matches m ON m.episode_video_id = e.id
+        LEFT JOIN videos v ON v.id = m.vod_video_id
+        WHERE e.kind = 'episode'
+        GROUP BY
+            e.id,
+            e.title,
+            e.webpage_url,
+            e.upload_date,
+            v.title,
+            v.webpage_url,
+            v.upload_date,
+            m.matched_start_seconds,
+            m.confidence
         ORDER BY e.upload_date DESC
         """
     ).fetchall()
@@ -45,7 +57,7 @@ def export_matches_html(conn: sqlite3.Connection) -> None:
         "        <th>VOD Date</th>",
         "        <th>Start Time</th>",
         "        <th>Timestamp Link</th>",
-        "        <th>Confidence</th>",
+        "        <th>Confidence <br/>(cutoff 15%)</th>",
         "      </tr>",
         "    </thead>",
         "    <tbody>",
@@ -61,14 +73,25 @@ def export_matches_html(conn: sqlite3.Connection) -> None:
         matched_start_seconds,
         confidence,
     ) in rows:
-        start_seconds = int(matched_start_seconds)
-        hours = start_seconds // 3600
-        minutes = (start_seconds % 3600) // 60
-        seconds = start_seconds % 60
-        start_time = f"{hours:02}:{minutes:02}:{seconds:02}"
-        timestamped_url = f"{vod_url}&t={start_seconds}s"
+        if matched_start_seconds is not None:
+            start_seconds = int(matched_start_seconds)
+            hours = start_seconds // 3600
+            minutes = (start_seconds % 3600) // 60
+            seconds = start_seconds % 60
+            start_time = f"{hours:02}:{minutes:02}:{seconds:02}"
+        else:
+            start_seconds = None
+            start_time = "N/a"
 
-        if confidence >= MATCH_CONFIDENCE_CUTOFF:
+        if (
+            confidence is not None
+            and confidence >= MATCH_CONFIDENCE_CUTOFF
+            and vod_title is not None
+            and vod_url is not None
+            and vod_date is not None
+            and start_seconds is not None
+        ):
+            timestamped_url = f"{vod_url}&t={start_seconds}s"
             vod_title_cell = f'<a href="{vod_url}">{vod_title}</a>'
             vod_date_cell = vod_date
             start_time_cell = start_time
@@ -76,11 +99,17 @@ def export_matches_html(conn: sqlite3.Connection) -> None:
                 f'<a href="{timestamped_url}" target="_blank" '
                 f'rel="noopener noreferrer">Open</a>'
             )
+            confidence_cell = f"{confidence * 100:.2f}%"
         else:
             vod_title_cell = "N/a"
             vod_date_cell = "N/a"
             start_time_cell = "N/a"
             timestamp_cell = "N/a"
+            confidence_cell = (
+                f"{confidence * 100:.2f}%"
+                if confidence is not None
+                else "N/a"
+            )
 
         html.extend(
             [
@@ -91,9 +120,18 @@ def export_matches_html(conn: sqlite3.Connection) -> None:
                 f"        <td>{vod_date_cell}</td>",
                 f"        <td>{start_time_cell}</td>",
                 f"        <td>{timestamp_cell}</td>",
-                f"        <td>{confidence * 100:.2f}%</td>",
+                f"        <td>{confidence_cell}</td>",
                 "      </tr>",
             ]
         )
+
+    html.extend(
+        [
+            "    </tbody>",
+            "  </table>",
+            "</body>",
+            "</html>",
+        ]
+    )
 
     OUTPUT_PATH.write_text("\n".join(html), encoding="utf-8")
