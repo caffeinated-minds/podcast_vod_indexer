@@ -161,12 +161,14 @@ def get_transcript_segments(video_url: str) -> list[dict[str, object]]:
     return parse_json3_captions(data)
 
 
-def get_latest_videos(source_url: str, limit: int = 5) -> list[dict]:
+def get_latest_videos(source_url: str, limit: int | None = None) -> list[dict]:
     ydl_opts = {
         "quiet": True,
         "extract_flat": True,
-        "playlistend": limit,
     }
+
+    if limit is not None:
+        ydl_opts["playlistend"] = limit
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(source_url, download=False)

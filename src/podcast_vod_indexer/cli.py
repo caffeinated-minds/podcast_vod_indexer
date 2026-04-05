@@ -24,8 +24,13 @@ import time
 MATCH_CONFIDENCE_CUTOFF = 0.15
 
 
-def process_source(conn, source_url: str, kind: str, limit: int) -> None:
-    videos = get_latest_videos(source_url, limit=limit)
+def process_source(
+        conn, source_url: str, kind: str, limit: int | None = None
+        ) -> None:
+    if limit is None:
+        videos = get_latest_videos(source_url)
+    else:
+        videos = get_latest_videos(source_url, limit=limit)
 
     for v in videos:
         video_url = v["webpage_url"]
@@ -191,12 +196,12 @@ def main() -> None:
 
     with get_connection() as conn:
         process_source(conn, vod_source_url, kind="vod", limit=100)
-        process_source(conn, episode_source_url, kind="episode", limit=10)
+        process_source(conn, episode_source_url, kind="episode")
 
         fetch_missing_transcripts_with_budget(
             conn,
-            vod_limit=9,
-            episode_limit=1,
+            vod_limit=5,
+            episode_limit=5,
         )
 
         run_matching(conn)
