@@ -200,8 +200,8 @@ def main() -> None:
 
         fetch_missing_transcripts_with_budget(
             conn,
-            vod_limit=5,
-            episode_limit=5,
+            vod_limit=10,
+            episode_limit=2,
         )
 
         run_matching(conn)
