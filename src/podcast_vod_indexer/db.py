@@ -53,6 +53,19 @@ def init_db() -> None:
             """
         )
 
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS episode_long_matches (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                short_episode_video_id INTEGER UNIQUE,
+                long_episode_video_id INTEGER,
+                confidence REAL,
+                FOREIGN KEY(short_episode_video_id) REFERENCES videos(id),
+                FOREIGN KEY(long_episode_video_id) REFERENCES videos(id)
+            )
+            """
+        )
+
 
 def insert_video(conn, video: dict) -> int:
     cursor = conn.execute(
@@ -238,6 +251,33 @@ def upsert_match(
             episode_video_id,
             vod_video_id,
             matched_start_seconds,
+            confidence,
+        ),
+    )
+
+
+def upsert_episode_long_match(
+    conn,
+    short_episode_video_id: int,
+    long_episode_video_id: int,
+    confidence: float,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO episode_long_matches (
+            short_episode_video_id,
+            long_episode_video_id,
+            confidence
+        )
+        VALUES (?, ?, ?)
+        ON CONFLICT(short_episode_video_id)
+        DO UPDATE SET
+            long_episode_video_id = excluded.long_episode_video_id,
+            confidence = excluded.confidence
+        """,
+        (
+            short_episode_video_id,
+            long_episode_video_id,
             confidence,
         ),
     )

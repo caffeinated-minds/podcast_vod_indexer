@@ -17,11 +17,17 @@ def export_matches_html(conn: sqlite3.Connection) -> None:
             v.webpage_url,
             v.upload_date,
             m.matched_start_seconds,
-            m.confidence
+            m.confidence,
+            le.title,
+            le.webpage_url,
+            elm.confidence
         FROM videos e
         JOIN segments s ON s.video_id = e.id
         LEFT JOIN matches m ON m.episode_video_id = e.id
         LEFT JOIN videos v ON v.id = m.vod_video_id
+        LEFT JOIN episode_long_matches elm
+            ON elm.short_episode_video_id = e.id
+        LEFT JOIN videos le ON le.id = elm.long_episode_video_id
         WHERE e.kind = 'episode'
         GROUP BY
             e.id,
@@ -32,7 +38,10 @@ def export_matches_html(conn: sqlite3.Connection) -> None:
             v.webpage_url,
             v.upload_date,
             m.matched_start_seconds,
-            m.confidence
+            m.confidence,
+            le.title,
+            le.webpage_url,
+            elm.confidence
         ORDER BY e.upload_date DESC
         """
     ).fetchall()
@@ -57,6 +66,7 @@ def export_matches_html(conn: sqlite3.Connection) -> None:
         "        <th>VOD Date</th>",
         "        <th>Start Time</th>",
         "        <th>Timestamp Link</th>",
+        "        <th>Long Episode</th>",
         "        <th>Confidence <br/>(cutoff 15%)</th>",
         "      </tr>",
         "    </thead>",
@@ -72,6 +82,9 @@ def export_matches_html(conn: sqlite3.Connection) -> None:
         vod_date,
         matched_start_seconds,
         confidence,
+        long_episode_title,
+        long_episode_url,
+        long_episode_confidence,
     ) in rows:
         if matched_start_seconds is not None:
             start_seconds = int(matched_start_seconds)
@@ -111,6 +124,19 @@ def export_matches_html(conn: sqlite3.Connection) -> None:
                 else "N/a"
             )
 
+        if (
+            long_episode_title is not None
+            and long_episode_url is not None
+            and long_episode_confidence is not None
+        ):
+            long_episode_cell = (
+                f'<a href="{long_episode_url}" '
+                f'title="{long_episode_confidence * 100:.2f}% match">'
+                f"{long_episode_title}</a>"
+            )
+        else:
+            long_episode_cell = "N/a"
+
         html.extend(
             [
                 "      <tr>",
@@ -120,6 +146,7 @@ def export_matches_html(conn: sqlite3.Connection) -> None:
                 f"        <td>{vod_date_cell}</td>",
                 f"        <td>{start_time_cell}</td>",
                 f"        <td>{timestamp_cell}</td>",
+                f"        <td>{long_episode_cell}</td>",
                 f"        <td>{confidence_cell}</td>",
                 "      </tr>",
             ]

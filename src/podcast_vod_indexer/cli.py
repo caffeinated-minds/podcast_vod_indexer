@@ -9,6 +9,8 @@ from podcast_vod_indexer.db import (
     get_segments_for_video,
     get_match_confidence_for_episode,
     upsert_match,
+    get_videos_by_kind,
+    upsert_episode_long_match,
 )
 from podcast_vod_indexer.youtube import (
     get_latest_videos,
@@ -16,7 +18,10 @@ from podcast_vod_indexer.youtube import (
     get_transcript_segments,
     TranscriptRateLimitError,
 )
-from podcast_vod_indexer.matching import find_best_window_match
+from podcast_vod_indexer.matching import (
+    find_best_window_match,
+    find_best_title_match,
+)
 from podcast_vod_indexer.export import export_matches_html
 
 import time
@@ -201,11 +206,44 @@ def run_matching(conn) -> None:
             print("  -> no candidate found")
 
 
+def run_long_episode_matching(conn) -> None:
+    short_episodes = get_videos_by_kind(conn, "episode")
+    long_episodes = get_videos_by_kind(conn, "episode_long")
+
+    if not long_episodes:
+        print("[long-episode-match] No long episodes found")
+        return
+
+    for episode_id, _, episode_title in short_episodes:
+        match = find_best_title_match(episode_title, long_episodes)
+
+        if match is None:
+            print(f"[long-episode-match] No candidate: {episode_title}")
+            continue
+
+        upsert_episode_long_match(
+            conn,
+            short_episode_video_id=episode_id,
+            long_episode_video_id=match["video_id"],
+            confidence=match["score"],
+        )
+        conn.commit()
+
+        print(
+            f"[long-episode-match] Stored: {episode_title} "
+            f"({match['score'] * 100:.2f}%)"
+        )
+
+
 def main() -> None:
     vod_source_url = "https://www.youtube.com/@ThePrimeTimeagen/streams"
     episode_source_url = (
         "https://www.youtube.com/playlist?"
         "list=PL2Fq-K0QdOQiJpufsnhEd1z3xOv2JMHuk"
+    )
+    long_episode_source_url = (
+        "https://www.youtube.com/playlist?"
+        "list=PLnO2sUspiA2b-gmVb-khiLa2NoQ7mHzZ-"
     )
 
     init_db()
@@ -213,6 +251,7 @@ def main() -> None:
     with get_connection() as conn:
         process_source(conn, vod_source_url, kind="vod")
         process_source(conn, episode_source_url, kind="episode")
+        process_source(conn, long_episode_source_url, kind="episode_long")
 
         fetch_missing_transcripts_with_budget(
             conn,
@@ -221,6 +260,7 @@ def main() -> None:
         )
 
         run_matching(conn)
+        run_long_episode_matching(conn)
         export_matches_html(conn)
 
         conn.commit()

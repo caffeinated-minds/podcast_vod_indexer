@@ -1,4 +1,18 @@
 from difflib import SequenceMatcher
+import re
+
+
+TITLE_STOP_WORDS = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "is",
+    "of",
+    "on",
+    "the",
+    "to",
+}
 
 
 def join_segment_text(segments: list[dict]) -> str:
@@ -7,6 +21,49 @@ def join_segment_text(segments: list[dict]) -> str:
 
 def similarity_score(a: str, b: str) -> float:
     return SequenceMatcher(None, a, b).ratio()
+
+
+def normalize_title(title: str) -> str:
+    title = title.lower()
+    title = title.replace("thestandup", "the standup")
+    title = re.sub(r"[^a-z0-9]+", " ", title)
+
+    words = [
+        word
+        for word in title.split()
+        if word not in TITLE_STOP_WORDS
+    ]
+
+    return " ".join(words)
+
+
+def find_best_title_match(
+    title: str, candidates: list[tuple[int, str, str]]
+) -> dict | None:
+    normalized_title = normalize_title(title)
+
+    if not normalized_title:
+        return None
+
+    best_match = None
+    best_score = -1.0
+
+    for video_id, _, candidate_title in candidates:
+        normalized_candidate = normalize_title(candidate_title)
+
+        if not normalized_candidate:
+            continue
+
+        score = similarity_score(normalized_title, normalized_candidate)
+
+        if score > best_score:
+            best_score = score
+            best_match = {
+                "video_id": video_id,
+                "score": score,
+            }
+
+    return best_match
 
 
 def build_windows(
