@@ -60,11 +60,23 @@ def init_db() -> None:
                 short_episode_video_id INTEGER UNIQUE,
                 long_episode_video_id INTEGER,
                 confidence REAL,
+                match_method TEXT,
                 FOREIGN KEY(short_episode_video_id) REFERENCES videos(id),
                 FOREIGN KEY(long_episode_video_id) REFERENCES videos(id)
             )
             """
         )
+
+        columns = {
+            row[1]
+            for row in conn.execute(
+                "PRAGMA table_info(episode_long_matches)"
+            ).fetchall()
+        }
+        if "match_method" not in columns:
+            conn.execute(
+                "ALTER TABLE episode_long_matches ADD COLUMN match_method TEXT"
+            )
 
 
 def insert_video(conn, video: dict) -> int:
@@ -182,6 +194,21 @@ def get_match_confidence_for_episode(
     return row[0] if row else None
 
 
+def get_episode_long_match_for_episode(
+    conn, short_episode_video_id: int
+) -> tuple[float, str | None] | None:
+    row = conn.execute(
+        """
+        SELECT confidence, match_method
+        FROM episode_long_matches
+        WHERE short_episode_video_id = ?
+        """,
+        (short_episode_video_id,),
+    ).fetchone()
+
+    return (row[0], row[1]) if row else None
+
+
 def get_videos_without_segments_by_kind(
         conn, kind: str, limit: int
         ) -> list[tuple[int, str, str]]:
@@ -261,23 +288,27 @@ def upsert_episode_long_match(
     short_episode_video_id: int,
     long_episode_video_id: int,
     confidence: float,
+    match_method: str,
 ) -> None:
     conn.execute(
         """
         INSERT INTO episode_long_matches (
             short_episode_video_id,
             long_episode_video_id,
-            confidence
+            confidence,
+            match_method
         )
-        VALUES (?, ?, ?)
+        VALUES (?, ?, ?, ?)
         ON CONFLICT(short_episode_video_id)
         DO UPDATE SET
             long_episode_video_id = excluded.long_episode_video_id,
-            confidence = excluded.confidence
+            confidence = excluded.confidence,
+            match_method = excluded.match_method
         """,
         (
             short_episode_video_id,
             long_episode_video_id,
             confidence,
+            match_method,
         ),
     )

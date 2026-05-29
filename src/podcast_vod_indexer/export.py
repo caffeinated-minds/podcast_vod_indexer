@@ -128,6 +128,7 @@ def export_matches_html(conn: sqlite3.Connection) -> None:
             long_episode_title is not None
             and long_episode_url is not None
             and long_episode_confidence is not None
+            and long_episode_confidence >= MATCH_CONFIDENCE_CUTOFF
         ):
             long_episode_cell = (
                 f'<a href="{long_episode_url}">{long_episode_title}</a>'
@@ -139,12 +140,12 @@ def export_matches_html(conn: sqlite3.Connection) -> None:
             [
                 "      <tr>",
                 f'        <td><a href="{episode_url}">{episode_title}</a></td>',
-                f"        <td>{long_episode_cell}</td>",
                 f"        <td>{episode_date}</td>",
                 f"        <td>{vod_title_cell}</td>",
                 f"        <td>{vod_date_cell}</td>",
                 f"        <td>{start_time_cell}</td>",
                 f"        <td>{timestamp_cell}</td>",
+                f"        <td>{long_episode_cell}</td>",
                 f"        <td>{confidence_cell}</td>",
                 "      </tr>",
             ]

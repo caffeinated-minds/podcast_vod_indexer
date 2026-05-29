@@ -66,6 +66,41 @@ def find_best_title_match(
     return best_match
 
 
+def get_segments_before(
+    segments: list[dict],
+    max_seconds: float,
+) -> list[dict]:
+    return [
+        segment
+        for segment in segments
+        if segment["start"] < max_seconds
+    ]
+
+
+def find_long_episode_transcript_match(
+    episode_segments: list[dict],
+    long_episode_segments: list[dict],
+    max_long_episode_seconds: float,
+) -> dict | None:
+    episode_text = join_segment_text(episode_segments)
+    long_episode_text = join_segment_text(
+        get_segments_before(
+            long_episode_segments,
+            max_long_episode_seconds,
+        )
+    )
+
+    if not episode_text or not long_episode_text:
+        return None
+
+    return {
+        "score": similarity_score(
+            episode_text[:5000],
+            long_episode_text[:5000],
+        ),
+    }
+
+
 def build_windows(
     segments: list[dict],
     window_seconds: float = 900.0,
