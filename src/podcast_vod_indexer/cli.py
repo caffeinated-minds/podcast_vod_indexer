@@ -7,6 +7,7 @@ from podcast_vod_indexer.db import (
     get_videos_without_segments_by_kind,
     get_videos_with_segments_by_kind,
     get_segments_for_video,
+    get_match_confidence_for_episode,
     upsert_match,
 )
 from podcast_vod_indexer.youtube import (
@@ -22,6 +23,7 @@ import time
 
 
 MATCH_CONFIDENCE_CUTOFF = 0.15
+MATCH_SKIP_CONFIDENCE_CUTOFF = 0.15
 
 
 def process_source(
@@ -138,6 +140,20 @@ def run_matching(conn) -> None:
     vods = get_videos_with_segments_by_kind(conn, "vod")
 
     for episode_id, _, episode_title in episodes:
+        existing_confidence = get_match_confidence_for_episode(
+            conn, episode_id
+        )
+
+        if (
+            existing_confidence is not None
+            and existing_confidence >= MATCH_SKIP_CONFIDENCE_CUTOFF
+        ):
+            print(
+                f"[match] Skipping: {episode_title} "
+                f"({existing_confidence * 100:.2f}%)"
+            )
+            continue
+
         episode_segments = get_segments_for_video(conn, episode_id)
 
         best_vod_id = None
@@ -195,7 +211,7 @@ def main() -> None:
     init_db()
 
     with get_connection() as conn:
-        process_source(conn, vod_source_url, kind="vod", limit=100)
+        process_source(conn, vod_source_url, kind="vod")
         process_source(conn, episode_source_url, kind="episode")
 
         fetch_missing_transcripts_with_budget(

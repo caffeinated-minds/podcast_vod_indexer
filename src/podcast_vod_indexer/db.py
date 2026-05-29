@@ -154,6 +154,21 @@ def get_segments_for_video(conn, video_id: int) -> list[dict]:
     ]
 
 
+def get_match_confidence_for_episode(
+    conn, episode_video_id: int
+) -> float | None:
+    row = conn.execute(
+        """
+        SELECT confidence
+        FROM matches
+        WHERE episode_video_id = ?
+        """,
+        (episode_video_id,),
+    ).fetchone()
+
+    return row[0] if row else None
+
+
 def get_videos_without_segments_by_kind(
         conn, kind: str, limit: int
         ) -> list[tuple[int, str, str]]:
