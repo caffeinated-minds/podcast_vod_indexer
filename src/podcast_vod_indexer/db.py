@@ -21,10 +21,18 @@ def init_db() -> None:
                 uploader TEXT,
                 upload_date TEXT,
                 duration_seconds INTEGER,
-                webpage_url TEXT
+                webpage_url TEXT,
+                spotify_url TEXT
             )
             """
         )
+
+        video_columns = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(videos)").fetchall()
+        }
+        if "spotify_url" not in video_columns:
+            conn.execute("ALTER TABLE videos ADD COLUMN spotify_url TEXT")
 
         conn.execute(
             """
@@ -84,9 +92,9 @@ def insert_video(conn, video: dict) -> int:
         """
         INSERT OR IGNORE INTO videos (
             youtube_id, kind, title, uploader, upload_date,
-            duration_seconds, webpage_url
+            duration_seconds, webpage_url, spotify_url
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             video["youtube_id"],
@@ -96,6 +104,7 @@ def insert_video(conn, video: dict) -> int:
             video["upload_date"],
             video["duration_seconds"],
             video["webpage_url"],
+            video.get("spotify_url"),
         ),
     )
 
@@ -109,6 +118,32 @@ def insert_video(conn, video: dict) -> int:
     ).fetchone()
 
     return row[0]
+
+
+def get_spotify_url_for_video(conn, video_id: int) -> str | None:
+    row = conn.execute(
+        """
+        SELECT spotify_url
+        FROM videos
+        WHERE id = ?
+        """,
+        (video_id,),
+    ).fetchone()
+
+    return row[0] if row else None
+
+
+def update_video_spotify_url(
+    conn, youtube_id: str, spotify_url: str | None
+) -> None:
+    conn.execute(
+        """
+        UPDATE videos
+        SET spotify_url = ?
+        WHERE youtube_id = ?
+        """,
+        (spotify_url, youtube_id),
+    )
 
 
 def insert_segments(conn, video_id: int, segments: list[dict]) -> None:

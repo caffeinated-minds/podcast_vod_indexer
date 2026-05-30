@@ -45,6 +45,8 @@ def render_rows(rows: list[tuple]) -> str:
         confidence,
         long_episode_url,
         long_episode_confidence,
+        episode_spotify_url,
+        long_episode_spotify_url,
     ) in rows:
         start_seconds = (
             int(matched_start_seconds)
@@ -90,6 +92,12 @@ def render_rows(rows: list[tuple]) -> str:
         else:
             long_episode_cell = ""
 
+        spotify_url = episode_spotify_url or long_episode_spotify_url
+        if spotify_url:
+            spotify_cell = link_cell(spotify_url, "Open", new_tab=True)
+        else:
+            spotify_cell = ""
+
         html_rows.extend(
             [
                 "      <tr>",
@@ -97,6 +105,7 @@ def render_rows(rows: list[tuple]) -> str:
                 f"{link_cell(episode_url, episode_title)}</td>",
                 f"        <td>{escape(episode_date or '')}</td>",
                 f"        <td>{long_episode_cell}</td>",
+                f"        <td>{spotify_cell}</td>",
                 f"        <td>{vod_title_cell}</td>",
                 f"        <td>{vod_date_cell}</td>",
                 f"        <td>{start_time_cell}</td>",
@@ -131,7 +140,9 @@ def export_matches_html(conn: sqlite3.Connection) -> None:
             m.matched_start_seconds,
             m.confidence,
             le.webpage_url,
-            elm.confidence
+            elm.confidence,
+            e.spotify_url,
+            le.spotify_url
         FROM videos e
         JOIN segments s ON s.video_id = e.id
         LEFT JOIN matches m ON m.episode_video_id = e.id
@@ -151,7 +162,9 @@ def export_matches_html(conn: sqlite3.Connection) -> None:
             m.matched_start_seconds,
             m.confidence,
             le.webpage_url,
-            elm.confidence
+            elm.confidence,
+            e.spotify_url,
+            le.spotify_url
         ORDER BY e.upload_date DESC
         """
     ).fetchall()

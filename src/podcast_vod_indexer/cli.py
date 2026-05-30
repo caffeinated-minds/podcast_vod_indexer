@@ -4,6 +4,8 @@ from podcast_vod_indexer.db import (
     insert_video,
     insert_segments,
     get_video_id_by_youtube_id,
+    get_spotify_url_for_video,
+    update_video_spotify_url,
     get_videos_without_segments_by_kind,
     get_videos_with_segments_by_kind,
     get_segments_for_video,
@@ -51,6 +53,19 @@ def process_source(
 
         existing_id = get_video_id_by_youtube_id(conn, youtube_id)
         if existing_id:
+            if (
+                kind in {"episode", "episode_long"}
+                and get_spotify_url_for_video(conn, existing_id) is None
+            ):
+                video = get_video_info(video_url, kind=kind)
+                update_video_spotify_url(
+                    conn,
+                    youtube_id,
+                    video.get("spotify_url"),
+                )
+                print("  -> refreshed spotify link")
+                continue
+
             print("  -> already known, skipping metadata")
             continue
 
