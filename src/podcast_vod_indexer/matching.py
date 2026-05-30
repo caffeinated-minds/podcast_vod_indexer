@@ -80,25 +80,42 @@ def get_segments_before(
 def find_long_episode_transcript_match(
     episode_segments: list[dict],
     long_episode_segments: list[dict],
+    max_episode_seconds: float,
     max_long_episode_seconds: float,
+    window_seconds: float,
+    step_seconds: float,
 ) -> dict | None:
-    episode_text = join_segment_text(episode_segments)
-    long_episode_text = join_segment_text(
-        get_segments_before(
-            long_episode_segments,
-            max_long_episode_seconds,
-        )
+    episode_text = join_segment_text(
+        get_segments_before(episode_segments, max_episode_seconds)
     )
 
-    if not episode_text or not long_episode_text:
+    if not episode_text:
         return None
 
-    return {
-        "score": similarity_score(
+    long_episode_windows = build_windows(
+        get_segments_before(long_episode_segments, max_long_episode_seconds),
+        window_seconds=window_seconds,
+        step_seconds=step_seconds,
+    )
+
+    best_match = None
+    best_score = -1.0
+
+    for window in long_episode_windows:
+        score = similarity_score(
             episode_text[:5000],
-            long_episode_text[:5000],
-        ),
-    }
+            window["text"][:5000],
+        )
+
+        if score > best_score:
+            best_score = score
+            best_match = {
+                "start": window["start"],
+                "end": window["end"],
+                "score": score,
+            }
+
+    return best_match
 
 
 def build_windows(

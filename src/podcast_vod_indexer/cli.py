@@ -28,8 +28,11 @@ import time
 
 MATCH_CONFIDENCE_CUTOFF = 0.15
 MATCH_SKIP_CONFIDENCE_CUTOFF = 0.15
-LONG_EPISODE_MATCH_SECONDS = 45 * 60
-LONG_EPISODE_MATCH_METHOD = "transcript_45m"
+SHORT_EPISODE_MATCH_SECONDS = 15 * 60
+LONG_EPISODE_SEARCH_SECONDS = 45 * 60
+LONG_EPISODE_WINDOW_SECONDS = 15 * 60
+LONG_EPISODE_STEP_SECONDS = 2 * 60
+LONG_EPISODE_MATCH_METHOD = "transcript_short15m_long45m_window15m"
 
 
 def process_source(
@@ -231,7 +234,10 @@ def run_long_episode_matching(conn) -> None:
             match = find_long_episode_transcript_match(
                 episode_segments,
                 long_episode_segments,
-                max_long_episode_seconds=LONG_EPISODE_MATCH_SECONDS,
+                max_episode_seconds=SHORT_EPISODE_MATCH_SECONDS,
+                max_long_episode_seconds=LONG_EPISODE_SEARCH_SECONDS,
+                window_seconds=LONG_EPISODE_WINDOW_SECONDS,
+                step_seconds=LONG_EPISODE_STEP_SECONDS,
             )
 
             if match is None:
