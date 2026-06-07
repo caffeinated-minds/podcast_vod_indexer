@@ -4,8 +4,10 @@ from podcast_vod_indexer.db import (
     insert_video,
     insert_segments,
     get_video_id_by_youtube_id,
-    get_spotify_url_for_video,
-    update_video_spotify_url,
+    upsert_spotify_episode,
+    get_episode_videos_for_spotify_matching,
+    get_spotify_episodes,
+    upsert_spotify_match,
     get_videos_without_segments_by_kind,
     get_videos_with_segments_by_kind,
     get_segments_for_video,
@@ -18,6 +20,12 @@ from podcast_vod_indexer.youtube import (
     get_video_info,
     get_transcript_segments,
     TranscriptRateLimitError,
+)
+from podcast_vod_indexer.spotify import (
+    SpotifyApiError,
+    SpotifyCredentialsMissingError,
+    fetch_show_episodes,
+    spotify_match_score,
 )
 from podcast_vod_indexer.matching import (
     find_best_window_match,
@@ -35,6 +43,8 @@ LONG_EPISODE_SEARCH_SECONDS = 45 * 60
 LONG_EPISODE_WINDOW_SECONDS = 15 * 60
 LONG_EPISODE_STEP_SECONDS = 2 * 60
 LONG_EPISODE_MATCH_METHOD = "transcript_short15m_long45m_window15m"
+SPOTIFY_SHOW_ID = "01A062kejnXFkJE01bjN5J"
+SPOTIFY_MATCH_METHOD = "metadata_title_date_duration"
 
 
 def process_source(
@@ -53,19 +63,6 @@ def process_source(
 
         existing_id = get_video_id_by_youtube_id(conn, youtube_id)
         if existing_id:
-            if (
-                kind in {"episode", "episode_long"}
-                and get_spotify_url_for_video(conn, existing_id) is None
-            ):
-                video = get_video_info(video_url, kind=kind)
-                update_video_spotify_url(
-                    conn,
-                    youtube_id,
-                    video.get("spotify_url"),
-                )
-                print("  -> refreshed spotify link")
-                continue
-
             print("  -> already known, skipping metadata")
             continue
 
@@ -73,6 +70,95 @@ def process_source(
         insert_video(conn, video)
 
     conn.commit()
+
+
+def process_spotify_show(conn, show_id: str) -> None:
+    print(f"[spotify] Processing show: {show_id}")
+
+    try:
+        episodes = fetch_show_episodes(show_id)
+    except SpotifyCredentialsMissingError as e:
+        print(f"  -> spotify sync skipped: {e}")
+        return
+    except SpotifyApiError as e:
+        print(f"  -> spotify sync failed: {e}")
+        return
+
+    for episode in episodes:
+        upsert_spotify_episode(conn, episode)
+
+    conn.commit()
+    print(f"  -> stored {len(episodes)} spotify episodes")
+
+
+def run_spotify_matching(conn) -> None:
+    episodes = get_episode_videos_for_spotify_matching(conn)
+    spotify_episodes = get_spotify_episodes(conn)
+
+    if not spotify_episodes:
+        print("[spotify-match] No spotify episodes found")
+        return
+
+    candidates = []
+
+    for episode in episodes:
+        print(f"[spotify-match] Episode: {episode['title']}")
+
+        for spotify_episode in spotify_episodes:
+            candidates.append(
+                {
+                    "episode_id": episode["id"],
+                    "episode_title": episode["title"],
+                    "spotify_episode_id": spotify_episode["id"],
+                    "spotify_episode_title": spotify_episode["title"],
+                    "score": spotify_match_score(
+                        episode,
+                        spotify_episode,
+                    ),
+                }
+            )
+
+    candidates.sort(key=lambda candidate: candidate["score"], reverse=True)
+
+    matched_episode_ids = set()
+    matched_spotify_episode_ids = set()
+
+    for candidate in candidates:
+        episode_id = candidate["episode_id"]
+        spotify_episode_id = candidate["spotify_episode_id"]
+
+        if (
+            episode_id in matched_episode_ids
+            or spotify_episode_id in matched_spotify_episode_ids
+        ):
+            continue
+
+        upsert_spotify_match(
+            conn,
+            episode_video_id=episode_id,
+            spotify_episode_id=spotify_episode_id,
+            confidence=candidate["score"],
+            match_method=SPOTIFY_MATCH_METHOD,
+        )
+        conn.commit()
+
+        matched_episode_ids.add(episode_id)
+        matched_spotify_episode_ids.add(spotify_episode_id)
+
+        if candidate["score"] >= MATCH_CONFIDENCE_CUTOFF:
+            print(
+                f"[spotify-match] Stored: "
+                f"{candidate['episode_title']} -> "
+                f"{candidate['spotify_episode_title']} "
+                f"({candidate['score'] * 100:.2f}%)"
+            )
+        else:
+            print(
+                f"[spotify-match] Stored low-confidence candidate: "
+                f"{candidate['episode_title']} -> "
+                f"{candidate['spotify_episode_title']} "
+                f"({candidate['score'] * 100:.2f}%)"
+            )
 
 
 def fetch_transcripts_for_videos(conn, kind: str, videos: list, limit: int):
@@ -337,6 +423,7 @@ def main() -> None:
         process_source(conn, vod_source_url, kind="vod")
         process_source(conn, episode_source_url, kind="episode")
         process_source(conn, long_episode_source_url, kind="episode_long")
+        process_spotify_show(conn, SPOTIFY_SHOW_ID)
 
         fetch_missing_transcripts_with_budget(
             conn,
@@ -347,6 +434,7 @@ def main() -> None:
 
         run_matching(conn)
         run_long_episode_matching(conn)
+        run_spotify_matching(conn)
         export_matches_html(conn)
 
         conn.commit()

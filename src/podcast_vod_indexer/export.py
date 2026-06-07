@@ -45,8 +45,8 @@ def render_rows(rows: list[tuple]) -> str:
         confidence,
         long_episode_url,
         long_episode_confidence,
-        episode_spotify_url,
-        long_episode_spotify_url,
+        matched_spotify_url,
+        spotify_match_confidence,
     ) in rows:
         start_seconds = (
             int(matched_start_seconds)
@@ -92,8 +92,12 @@ def render_rows(rows: list[tuple]) -> str:
         else:
             long_episode_cell = ""
 
-        spotify_url = episode_spotify_url or long_episode_spotify_url
-        if spotify_url:
+        if (
+            matched_spotify_url is not None
+            and spotify_match_confidence is not None
+            and spotify_match_confidence >= MATCH_CONFIDENCE_CUTOFF
+        ):
+            spotify_url = matched_spotify_url
             spotify_cell = link_cell(spotify_url, "Open", new_tab=True)
         else:
             spotify_cell = ""
@@ -141,8 +145,8 @@ def export_matches_html(conn: sqlite3.Connection) -> None:
             m.confidence,
             le.webpage_url,
             elm.confidence,
-            e.spotify_url,
-            le.spotify_url
+            se.spotify_url,
+            sm.confidence
         FROM videos e
         JOIN segments s ON s.video_id = e.id
         LEFT JOIN matches m ON m.episode_video_id = e.id
@@ -150,6 +154,8 @@ def export_matches_html(conn: sqlite3.Connection) -> None:
         LEFT JOIN episode_long_matches elm
             ON elm.short_episode_video_id = e.id
         LEFT JOIN videos le ON le.id = elm.long_episode_video_id
+        LEFT JOIN spotify_matches sm ON sm.episode_video_id = e.id
+        LEFT JOIN spotify_episodes se ON se.id = sm.spotify_episode_id
         WHERE e.kind = 'episode'
         GROUP BY
             e.id,
@@ -163,8 +169,8 @@ def export_matches_html(conn: sqlite3.Connection) -> None:
             m.confidence,
             le.webpage_url,
             elm.confidence,
-            e.spotify_url,
-            le.spotify_url
+            se.spotify_url,
+            sm.confidence
         ORDER BY e.upload_date DESC
         """
     ).fetchall()

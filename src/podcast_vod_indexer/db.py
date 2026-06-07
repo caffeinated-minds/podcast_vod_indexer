@@ -86,15 +86,46 @@ def init_db() -> None:
                 "ALTER TABLE episode_long_matches ADD COLUMN match_method TEXT"
             )
 
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS spotify_episodes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                spotify_id TEXT UNIQUE,
+                show_id TEXT,
+                title TEXT,
+                description TEXT,
+                html_description TEXT,
+                release_date TEXT,
+                release_date_precision TEXT,
+                duration_ms INTEGER,
+                spotify_url TEXT
+            )
+            """
+        )
+
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS spotify_matches (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                episode_video_id INTEGER UNIQUE,
+                spotify_episode_id INTEGER,
+                confidence REAL,
+                match_method TEXT,
+                FOREIGN KEY(episode_video_id) REFERENCES videos(id),
+                FOREIGN KEY(spotify_episode_id) REFERENCES spotify_episodes(id)
+            )
+            """
+        )
+
 
 def insert_video(conn, video: dict) -> int:
     cursor = conn.execute(
         """
         INSERT OR IGNORE INTO videos (
             youtube_id, kind, title, uploader, upload_date,
-            duration_seconds, webpage_url, spotify_url
+            duration_seconds, webpage_url
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
         (
             video["youtube_id"],
@@ -104,7 +135,6 @@ def insert_video(conn, video: dict) -> int:
             video["upload_date"],
             video["duration_seconds"],
             video["webpage_url"],
-            video.get("spotify_url"),
         ),
     )
 
@@ -120,29 +150,46 @@ def insert_video(conn, video: dict) -> int:
     return row[0]
 
 
-def get_spotify_url_for_video(conn, video_id: int) -> str | None:
-    row = conn.execute(
-        """
-        SELECT spotify_url
-        FROM videos
-        WHERE id = ?
-        """,
-        (video_id,),
-    ).fetchone()
+def upsert_spotify_episode(conn, episode: dict) -> None:
+    if not episode.get("spotify_id"):
+        return
 
-    return row[0] if row else None
-
-
-def update_video_spotify_url(
-    conn, youtube_id: str, spotify_url: str | None
-) -> None:
     conn.execute(
         """
-        UPDATE videos
-        SET spotify_url = ?
-        WHERE youtube_id = ?
+        INSERT INTO spotify_episodes (
+            spotify_id,
+            show_id,
+            title,
+            description,
+            html_description,
+            release_date,
+            release_date_precision,
+            duration_ms,
+            spotify_url
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(spotify_id)
+        DO UPDATE SET
+            show_id = excluded.show_id,
+            title = excluded.title,
+            description = excluded.description,
+            html_description = excluded.html_description,
+            release_date = excluded.release_date,
+            release_date_precision = excluded.release_date_precision,
+            duration_ms = excluded.duration_ms,
+            spotify_url = excluded.spotify_url
         """,
-        (spotify_url, youtube_id),
+        (
+            episode["spotify_id"],
+            episode.get("show_id"),
+            episode.get("title"),
+            episode.get("description"),
+            episode.get("html_description"),
+            episode.get("release_date"),
+            episode.get("release_date_precision"),
+            episode.get("duration_ms"),
+            episode.get("spotify_url"),
+        ),
     )
 
 
@@ -191,6 +238,61 @@ def get_videos_by_kind(conn, kind: str) -> list[tuple[int, str, str]]:
     ).fetchall()
 
     return rows
+
+
+def get_episode_videos_for_spotify_matching(conn) -> list[dict]:
+    rows = conn.execute(
+        """
+        SELECT
+            id,
+            youtube_id,
+            title,
+            upload_date,
+            duration_seconds
+        FROM videos
+        WHERE kind = 'episode'
+        ORDER BY upload_date DESC
+        """
+    ).fetchall()
+
+    return [
+        {
+            "id": row[0],
+            "youtube_id": row[1],
+            "title": row[2],
+            "upload_date": row[3],
+            "duration_seconds": row[4],
+        }
+        for row in rows
+    ]
+
+
+def get_spotify_episodes(conn) -> list[dict]:
+    rows = conn.execute(
+        """
+        SELECT
+            id,
+            spotify_id,
+            title,
+            release_date,
+            duration_ms,
+            spotify_url
+        FROM spotify_episodes
+        ORDER BY release_date DESC
+        """
+    ).fetchall()
+
+    return [
+        {
+            "id": row[0],
+            "spotify_id": row[1],
+            "title": row[2],
+            "release_date": row[3],
+            "duration_ms": row[4],
+            "spotify_url": row[5],
+        }
+        for row in rows
+    ]
 
 
 def get_segments_for_video(conn, video_id: int) -> list[dict]:
@@ -343,6 +445,37 @@ def upsert_episode_long_match(
         (
             short_episode_video_id,
             long_episode_video_id,
+            confidence,
+            match_method,
+        ),
+    )
+
+
+def upsert_spotify_match(
+    conn,
+    episode_video_id: int,
+    spotify_episode_id: int,
+    confidence: float,
+    match_method: str,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO spotify_matches (
+            episode_video_id,
+            spotify_episode_id,
+            confidence,
+            match_method
+        )
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(episode_video_id)
+        DO UPDATE SET
+            spotify_episode_id = excluded.spotify_episode_id,
+            confidence = excluded.confidence,
+            match_method = excluded.match_method
+        """,
+        (
+            episode_video_id,
+            spotify_episode_id,
             confidence,
             match_method,
         ),

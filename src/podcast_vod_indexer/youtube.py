@@ -7,7 +7,6 @@ from urllib.error import HTTPError
 from html import unescape
 
 import json
-import re
 import subprocess
 import xml.etree.ElementTree as ET
 import yt_dlp
@@ -22,18 +21,6 @@ YDL_OPTS = {
 }
 
 YTDLP_BIN = "/home/cm/Code/podcast_vod_indexer/.venv/bin/yt-dlp"
-SPOTIFY_URL_RE = re.compile(r"https://open\.spotify\.com/[^\s<>)\"']+")
-
-
-def extract_spotify_url(text: str | None) -> str | None:
-    if not text:
-        return None
-
-    match = SPOTIFY_URL_RE.search(text)
-    if not match:
-        return None
-
-    return match.group(0).rstrip(".,;:!?]")
 
 
 def _extract_info(video_url: str) -> dict[str, Any]:
@@ -71,7 +58,6 @@ def _get_english_caption_url(info: dict[str, Any]) -> str | None:
 
 def get_video_info(video_url: str, kind: str) -> dict[str, Any]:
     info = _extract_info(video_url)
-    description = info.get("description")
 
     return {
         "youtube_id": info.get("id"),
@@ -81,7 +67,6 @@ def get_video_info(video_url: str, kind: str) -> dict[str, Any]:
         "upload_date": info.get("upload_date"),
         "duration_seconds": info.get("duration"),
         "webpage_url": info.get("webpage_url"),
-        "spotify_url": extract_spotify_url(description),
         "start_time": info.get("start_time"),
         "has_automatic_captions": bool(info.get("automatic_captions")),
         "has_subtitles": bool(info.get("subtitles")),
