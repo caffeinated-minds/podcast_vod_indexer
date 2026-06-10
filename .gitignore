@@ -3,8 +3,6 @@ __pycache__/
 *.py[oc]
 build/
 dist/
-output/
-data/
 wheels/
 *.egg-info
 
@@ -13,3 +11,7 @@ wheels/
 
 # env
 .env
+
+# data and html
+output/
+data/

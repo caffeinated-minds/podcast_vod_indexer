@@ -131,16 +131,16 @@ The project currently:
 - Contains an in-progress Spotify synchronization and matching implementation.
 
 It does not yet provide the complete one-command pipeline, artifact publishing,
-public-page verification, X announcements, or automated tests.
+I public-page verification, X announcements, or automated tests.
 
 ## MVP Roadmap
 
 ### 1. Establish Safe Repository Boundaries
 
-- [ ] Stop tracking the mutable SQLite database in the source repository.
-- [ ] Stop tracking generated staging HTML in the source repository.
-- [ ] Add `data/`, `output/`, logs, and backups to `.gitignore`.
-- [ ] Create and configure an Azure Static Web Apps resource.
+- [x] Stop tracking the mutable SQLite database in the source repository.
+- [x] Stop tracking generated staging HTML in the source repository.
+- [x] Add `data/`, `output/`, logs, and backups to `.gitignore`.
+- [x] Create and configure an Azure Static Web Apps resource.
 - [ ] Create a private Azure Artifacts feed for full SQLite backups.
 - [ ] Add `.env.example` with placeholder Spotify, X, and publishing settings.
 - [ ] Document how local state is backed up and restored.
@@ -156,21 +156,27 @@ public-page verification, X announcements, or automated tests.
 
 ### 3. Define Match Success
 
-- [ ] Define separate confidence thresholds for VOD, full-episode, and Spotify matches.
+- [ ] Define separate confidence thresholds for VOD, full-episode, and Spotify
+      matches.
 - [ ] Distinguish successful, uncertain, and unmatched results.
 - [ ] Prevent weaker reruns from replacing stronger existing matches.
-- [ ] Add a durable record of when an episode first becomes successfully matched.
+- [ ] Add a durable record of when an episode first becomes successfully
+      matched.
 - [ ] Add stable HTML anchors for individual episodes.
-- [ ] Manually evaluate a representative sample and document acceptable accuracy.
+- [ ] Manually evaluate a representative sample and document acceptable
+      accuracy.
 
 ### 4. Build the Pipeline CLI
 
-- [ ] Add explicit `sync`, `match`, `export`, `publish`, and `announce` commands.
+- [ ] Add explicit `sync`, `match`, `export`, `publish`, and `announce`
+      commands.
 - [ ] Add a `run --publish --announce` command that orchestrates all stages.
-- [ ] Add a preflight stage that validates credentials, tools, paths, and repositories.
+- [ ] Add a preflight stage that validates credentials, tools, paths, and
+      repositories.
 - [ ] Make interrupted runs resumable and reruns idempotent.
 - [ ] Return nonzero exit codes for fatal failures.
-- [ ] Print a final summary of discovered, matched, published, and announced episodes.
+- [ ] Print a final summary of discovered, matched, published, and announced
+      episodes.
 - [ ] Add a dry-run mode that performs no publication or X posting.
 
 ### 5. Back Up SQLite Privately
@@ -187,7 +193,8 @@ public-page verification, X announcements, or automated tests.
 
 - [ ] Configure Azure Static Web Apps and its local deployment credentials.
 - [ ] Validate generated HTML before deployment.
-- [ ] Define useful CSV datasets, such as episodes, successful matches, and unmatched episodes.
+- [ ] Define useful CSV datasets, such as episodes, successful matches, and
+      unmatched episodes.
 - [ ] Generate CSV files from the same completed run as the HTML.
 - [ ] Use stable CSV columns and document their meanings.
 - [ ] Validate CSV row counts against the working SQLite database.
@@ -213,7 +220,8 @@ public-page verification, X announcements, or automated tests.
 - [ ] Add tests for title, transcript, date, and duration similarity.
 - [ ] Add tests for match selection and confidence thresholds.
 - [ ] Add tests for database upserts, migrations, and announcement uniqueness.
-- [ ] Add tests confirming static deployment contains only intended HTML and CSV files.
+- [ ] Add tests confirming static deployment contains only intended HTML and CSV
+      files.
 - [ ] Add tests for consistent SQLite backup creation and integrity validation.
 - [ ] Add tests for HTML escaping, links, and stable anchors.
 - [ ] Add an offline end-to-end test using fixtures.
@@ -225,16 +233,21 @@ public-page verification, X announcements, or automated tests.
 - [ ] Add a Makefile containing convenience commands only.
 - [ ] Add a version-controlled `systemd --user` service.
 - [ ] Add a version-controlled `systemd --user` timer.
-- [ ] Confirm scheduled runs can access browser cookies and the unlocked keyring.
+- [ ] Confirm scheduled runs can access browser cookies and the unlocked
+      keyring.
 - [ ] Confirm failures are visible through logs and do not publish or announce.
 
 ### 10. MVP Acceptance
 
-- [ ] A single local command completes sync, matching, export, publication, and announcement.
+- [ ] A single local command completes sync, matching, export, publication, and
+      announcement.
 - [ ] The command can rebuild and publish from the existing local SQLite state.
-- [ ] Every publication includes matching HTML and CSV exports from the same run.
-- [ ] Full SQLite snapshots are stored privately and can be restored successfully.
-- [ ] Azure Static Web Apps contains no SQLite database or private operational data.
+- [ ] Every publication includes matching HTML and CSV exports from the same
+      run.
+- [ ] Full SQLite snapshots are stored privately and can be restored
+      successfully.
+- [ ] Azure Static Web Apps contains no SQLite database or private operational
+      data.
 - [ ] Reruns are idempotent and never duplicate X announcements.
 - [ ] New successful matches are published before they are announced.
 - [ ] Failed indexing never publishes or posts.
