@@ -122,6 +122,8 @@ def build_windows(
     segments: list[dict],
     window_seconds: float = 900.0,
     step_seconds: float = 300.0,
+    start_seconds: float = 0.0,
+    end_seconds: float | None = None,
 ) -> list[dict]:
     if not segments:
         return []
@@ -131,8 +133,11 @@ def build_windows(
     )
     windows: list[dict] = []
 
-    window_start = 0.0
-    while window_start < max_time:
+    window_start = start_seconds
+    while (
+        window_start < max_time
+        and (end_seconds is None or window_start <= end_seconds)
+    ):
         window_end = window_start + window_seconds
 
         window_segments = [
@@ -161,13 +166,21 @@ def find_best_window_match(
     vod_segments: list[dict],
     window_seconds: float = 900.0,
     step_seconds: float = 300.0,
+    start_seconds: float = 0.0,
+    end_seconds: float | None = None,
 ) -> dict | None:
     episode_text = join_segment_text(episode_segments)
 
     best_match = None
     best_score = -1.0
 
-    for window in build_windows(vod_segments, window_seconds, step_seconds):
+    for window in build_windows(
+        vod_segments,
+        window_seconds,
+        step_seconds,
+        start_seconds,
+        end_seconds,
+    ):
         score = similarity_score(
             episode_text[:5000],
             window["text"][:5000],
@@ -182,3 +195,21 @@ def find_best_window_match(
             }
 
     return best_match
+
+
+def refine_low_confidence_window_match(
+    episode_segments: list[dict],
+    vod_segments: list[dict],
+    coarse_start_seconds: float,
+    window_seconds: float = 900.0,
+    search_radius_seconds: float = 300.0,
+    step_seconds: float = 60.0,
+) -> dict | None:
+    return find_best_window_match(
+        episode_segments,
+        vod_segments,
+        window_seconds=window_seconds,
+        step_seconds=step_seconds,
+        start_seconds=max(0.0, coarse_start_seconds - search_radius_seconds),
+        end_seconds=coarse_start_seconds + search_radius_seconds,
+    )

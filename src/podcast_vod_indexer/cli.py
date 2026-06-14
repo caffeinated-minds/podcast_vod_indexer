@@ -30,6 +30,7 @@ from podcast_vod_indexer.spotify import (
 from podcast_vod_indexer.matching import (
     find_best_window_match,
     find_long_episode_transcript_match,
+    refine_low_confidence_window_match,
 )
 from podcast_vod_indexer.export import export_matches_html
 
@@ -268,6 +269,7 @@ def run_matching(conn) -> None:
         episode_segments = get_segments_for_video(conn, episode_id)
 
         best_vod_id = None
+        best_vod_segments = None
         best_score = -1.0
         best_window_start = None
 
@@ -289,7 +291,31 @@ def run_matching(conn) -> None:
             if match["score"] > best_score:
                 best_score = match["score"]
                 best_vod_id = vod_id
+                best_vod_segments = vod_segments
                 best_window_start = match["start"]
+
+        if (
+            best_vod_id is not None
+            and best_vod_segments is not None
+            and best_window_start is not None
+            and best_score < MATCH_CONFIDENCE_CUTOFF
+        ):
+            refined_match = refine_low_confidence_window_match(
+                episode_segments,
+                best_vod_segments,
+                coarse_start_seconds=best_window_start,
+                window_seconds=900.0,
+                search_radius_seconds=300.0,
+                step_seconds=60.0,
+            )
+
+            if refined_match is not None and refined_match["score"] > best_score:
+                best_score = refined_match["score"]
+                best_window_start = refined_match["start"]
+                print(
+                    f"  -> refined low-confidence match "
+                    f"({best_score * 100:.2f}%)"
+                )
 
         if best_vod_id is not None and best_window_start is not None:
             upsert_match(
