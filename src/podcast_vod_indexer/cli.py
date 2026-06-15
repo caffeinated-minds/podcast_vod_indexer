@@ -12,6 +12,7 @@ from podcast_vod_indexer.db import (
     get_videos_with_segments_by_kind,
     get_segments_for_video,
     get_match_confidence_for_episode,
+    get_episode_long_match_for_episode,
     upsert_match,
     upsert_episode_long_match,
 )
@@ -162,12 +163,18 @@ def run_spotify_matching(conn) -> None:
             )
 
 
-def fetch_transcripts_for_videos(conn, kind: str, videos: list, limit: int):
+def fetch_transcripts_for_videos(
+    conn,
+    kind: str,
+    videos: list,
+    limit: int,
+) -> tuple[bool, set[int]]:
     successes = 0
+    fetched_video_ids: set[int] = set()
 
     for video_id, _, video_url in videos:
         if successes >= limit:
-            return True
+            return True, fetched_video_ids
 
         print(f"[{kind}] Fetching transcript: {video_url}")
 
@@ -182,6 +189,7 @@ def fetch_transcripts_for_videos(conn, kind: str, videos: list, limit: int):
             conn.commit()
             time.sleep(5)
             successes += 1
+            fetched_video_ids.add(video_id)
 
         except TranscriptRateLimitError:
             print(
@@ -189,14 +197,14 @@ def fetch_transcripts_for_videos(conn, kind: str, videos: list, limit: int):
                 " transcript fetches for this run"
             )
             conn.commit()
-            return False
+            return False, fetched_video_ids
 
         except Exception as e:
             print(f"  -> transcript fetch failed, skipping: {e}")
             conn.commit()
             time.sleep(20)
 
-    return True
+    return True, fetched_video_ids
 
 
 def fetch_missing_transcripts_with_budget(
@@ -204,7 +212,7 @@ def fetch_missing_transcripts_with_budget(
     vod_limit: int,
     episode_limit: int,
     long_episode_limit: int,
-) -> None:
+) -> set[int]:
     episode_videos = get_videos_without_segments_by_kind(
         conn,
         kind="episode",
@@ -223,31 +231,41 @@ def fetch_missing_transcripts_with_budget(
         limit=200,
     )
 
-    if not fetch_transcripts_for_videos(
+    episode_fetch_completed, _ = fetch_transcripts_for_videos(
         conn,
         kind="episode",
         videos=episode_videos,
         limit=episode_limit,
-    ):
-        return
+    )
+    if not episode_fetch_completed:
+        return set()
 
-    if not fetch_transcripts_for_videos(
+    long_episode_fetch_completed, _ = fetch_transcripts_for_videos(
         conn,
         kind="episode_long",
         videos=long_episode_videos,
         limit=long_episode_limit,
-    ):
-        return
+    )
+    if not long_episode_fetch_completed:
+        return set()
 
-    fetch_transcripts_for_videos(
+    _, fetched_vod_ids = fetch_transcripts_for_videos(
         conn,
         kind="vod",
         videos=vod_videos,
         limit=vod_limit,
     )
+    return fetched_vod_ids
 
 
-def run_matching(conn) -> None:
+def run_matching(
+    conn,
+    *,
+    new_vod_transcript_ids: set[int] | None = None,
+    newly_long_matched_episode_ids: set[int] | None = None,
+) -> None:
+    new_vod_transcript_ids = new_vod_transcript_ids or set()
+    newly_long_matched_episode_ids = newly_long_matched_episode_ids or set()
     episodes = get_videos_with_segments_by_kind(conn, "episode")
     vods = get_videos_with_segments_by_kind(conn, "vod")
 
@@ -265,6 +283,32 @@ def run_matching(conn) -> None:
                 f"({existing_confidence * 100:.2f}%)"
             )
             continue
+
+        if (
+            existing_confidence is not None
+            and not new_vod_transcript_ids
+            and episode_id not in newly_long_matched_episode_ids
+        ):
+            print(
+                f"[match] Skipping low-confidence candidate: "
+                f"{episode_title} "
+                f"({existing_confidence * 100:.2f}%, no new evidence)"
+            )
+            continue
+
+        if existing_confidence is not None:
+            retry_reasons = []
+            if new_vod_transcript_ids:
+                retry_reasons.append(
+                    f"{len(new_vod_transcript_ids)} new VOD transcript(s)"
+                )
+            if episode_id in newly_long_matched_episode_ids:
+                retry_reasons.append("newly accepted long-episode match")
+
+            print(
+                f"[match] Retrying low-confidence candidate: "
+                f"{episode_title} ({', '.join(retry_reasons)})"
+            )
 
         episode_segments = get_segments_for_video(conn, episode_id)
 
@@ -338,13 +382,13 @@ def run_matching(conn) -> None:
             print("  -> no candidate found")
 
 
-def run_long_episode_matching(conn) -> None:
+def run_long_episode_matching(conn) -> set[int]:
     short_episodes = get_videos_with_segments_by_kind(conn, "episode")
     long_episodes = get_videos_with_segments_by_kind(conn, "episode_long")
 
     if not long_episodes:
         print("[long-episode-match] No long episodes with transcripts found")
-        return
+        return set()
 
     candidates = []
 
@@ -384,6 +428,7 @@ def run_long_episode_matching(conn) -> None:
 
     matched_short_episode_ids = set()
     matched_long_episode_ids = set()
+    newly_accepted_short_episode_ids = set()
 
     for candidate in candidates:
         short_episode_id = candidate["short_episode_id"]
@@ -395,6 +440,10 @@ def run_long_episode_matching(conn) -> None:
         ):
             continue
 
+        existing_match = get_episode_long_match_for_episode(
+            conn,
+            short_episode_id,
+        )
         upsert_episode_long_match(
             conn,
             short_episode_video_id=short_episode_id,
@@ -408,6 +457,12 @@ def run_long_episode_matching(conn) -> None:
         matched_long_episode_ids.add(long_episode_id)
 
         if candidate["score"] >= MATCH_CONFIDENCE_CUTOFF:
+            if (
+                existing_match is None
+                or existing_match[0] < MATCH_CONFIDENCE_CUTOFF
+            ):
+                newly_accepted_short_episode_ids.add(short_episode_id)
+
             print(
                 f"[long-episode-match] Stored: "
                 f"{candidate['short_episode_title']} -> "
@@ -431,6 +486,8 @@ def run_long_episode_matching(conn) -> None:
     for episode_title in unmatched_short_episodes:
         print(f"[long-episode-match] No candidate: {episode_title}")
 
+    return newly_accepted_short_episode_ids
+
 
 def main() -> None:
     vod_source_url = "https://www.youtube.com/@ThePrimeTimeagen/streams"
@@ -451,15 +508,19 @@ def main() -> None:
         process_source(conn, long_episode_source_url, kind="episode_long")
         process_spotify_show(conn, SPOTIFY_SHOW_ID)
 
-        fetch_missing_transcripts_with_budget(
+        new_vod_transcript_ids = fetch_missing_transcripts_with_budget(
             conn,
             vod_limit=10,
             episode_limit=2,
             long_episode_limit=2,
         )
 
-        run_matching(conn)
-        run_long_episode_matching(conn)
+        newly_long_matched_episode_ids = run_long_episode_matching(conn)
+        run_matching(
+            conn,
+            new_vod_transcript_ids=new_vod_transcript_ids,
+            newly_long_matched_episode_ids=newly_long_matched_episode_ids,
+        )
         run_spotify_matching(conn)
         export_matches_html(conn)
 
