@@ -94,7 +94,7 @@ def render_rows(rows: list[tuple]) -> str:
             [
                 "      <tr>",
                 "        <td>"
-                f"{link_cell(episode_url, episode_title)}</td>",
+                f"{link_cell(episode_url, episode_title, new_tab=True)}</td>",
                 f"        <td>{escape(episode_date or '')}</td>",
                 f"        <td>{long_episode_cell}</td>",
                 f"        <td>{vod_title_cell}</td>",

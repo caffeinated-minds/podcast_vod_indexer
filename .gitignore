@@ -11,7 +11,3 @@ wheels/
 
 # env
 .env
-
-# data and html
-output/
-data/

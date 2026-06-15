@@ -67,15 +67,15 @@ during a logged-in desktop session so the browser keyring is available.
 
 ### Artifact Separation
 
-This source repository contains the pipeline implementation, configuration,
-tests, documentation, and deployment definitions.
+For the current MVP, this repository tracks the pipeline implementation and its
+latest generated state:
 
-Generated staging files and operational state are not source artifacts:
+- `data/index.db` contains collected metadata, transcripts, and match state.
+- `output/index.html` contains the latest generated public index.
 
-- Working SQLite database
-- Generated staging output
-- Logs and temporary database snapshots
-- Browser cookies and API credentials
+Updating these tracked files allows a push to trigger later cloud matching and
+publishing stages. Browser cookies, API credentials, logs, and temporary
+database snapshots must remain outside the repository.
 
 Azure Static Web Apps hosts only intentionally public outputs:
 
@@ -86,9 +86,8 @@ The HTML and CSV exports are generated from the same completed run so they
 remain consistent. The local pipeline deploys them to Azure Static Web Apps and
 verifies the public site before allowing X announcements.
 
-The complete working SQLite database is never published publicly. The pipeline
-creates a consistent full-database snapshot and uploads it as a private,
-versioned Azure Artifacts Universal Package for remote backup and recovery.
+Azure Static Web Apps deployment must include only intended public outputs. The
+tracked SQLite database must not be included in the static-site deployment.
 
 ### Credentials
 
@@ -124,6 +123,9 @@ The project currently:
 - Fetches and stores YouTube automatic-caption transcripts.
 - Matches short episodes to VOD transcript windows.
 - Matches short episodes to full-length YouTube episodes.
+- Ignores and prunes VODs older than the VOD matched to the first episode.
+- Skips accepted matches and scopes uncertain-match retries to new evidence.
+- Preserves stronger existing matches when new candidates score lower.
 - Generates a static Bootstrap HTML index.
 
 It does not yet provide the complete one-command pipeline, artifact publishing,
@@ -134,9 +136,9 @@ coverage.
 
 ### 1. Establish Safe Repository Boundaries
 
-- [x] Stop tracking the mutable SQLite database in the source repository.
-- [x] Stop tracking generated staging HTML in the source repository.
-- [x] Add `data/`, `output/`, logs, and backups to `.gitignore`.
+- [x] Track the latest SQLite database and generated HTML in the repository.
+- [x] Keep browser cookies and API credentials out of the repository.
+- [ ] Ensure deployment publishes HTML and CSV only, never SQLite.
 - [x] Create and configure an Azure Static Web Apps resource.
   - [Link](https://lively-flower-08252b703.7.azurestaticapps.net/)
 - [x] Create a private Azure Artifacts feed for full SQLite backups.
@@ -147,7 +149,9 @@ coverage.
 
 - [ ] Define separate confidence thresholds for VOD and full-episode matches.
 - [ ] Distinguish successful, uncertain, and unmatched results.
-- [ ] Prevent weaker reruns from replacing stronger existing matches.
+- [x] Prevent weaker reruns from replacing stronger existing matches.
+- [x] Skip repeated matching work unless relevant new transcript evidence is
+      available.
 - [ ] Add a durable record of when an episode first becomes successfully
       matched.
 - [ ] Add stable HTML anchors for individual episodes.

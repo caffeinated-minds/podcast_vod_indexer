@@ -25,6 +25,11 @@ class ExportHtmlTests(unittest.TestCase):
         self.assertNotIn("Spotify", html)
         self.assertEqual(html.count('<th scope="col">'), 8)
         self.assertEqual(html.count("<td>"), 8)
+        self.assertIn(
+            '<a href="https://example.com/episode" '
+            'target="_blank" rel="noopener noreferrer">Episode</a>',
+            html,
+        )
 
 
 if __name__ == "__main__":

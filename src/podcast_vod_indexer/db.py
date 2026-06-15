@@ -209,14 +209,117 @@ def get_episode_long_match_for_episode(
     return (row[0], row[1]) if row else None
 
 
+def get_first_episode_matched_vod_date(
+    conn,
+    min_confidence: float,
+) -> str | None:
+    row = conn.execute(
+        """
+        SELECT vod.upload_date
+        FROM videos episode
+        JOIN matches match ON match.episode_video_id = episode.id
+        JOIN videos vod ON vod.id = match.vod_video_id
+        WHERE episode.id = (
+            SELECT id
+            FROM videos
+            WHERE kind = 'episode'
+            ORDER BY upload_date ASC
+            LIMIT 1
+        )
+          AND match.confidence >= ?
+          AND vod.upload_date IS NOT NULL
+        """,
+        (min_confidence,),
+    ).fetchone()
+
+    return row[0] if row else None
+
+
+def prune_vods_before_date(conn, min_upload_date: str) -> tuple[int, int]:
+    referenced_count = conn.execute(
+        """
+        SELECT COUNT(*)
+        FROM matches match
+        JOIN videos vod ON vod.id = match.vod_video_id
+        WHERE vod.kind = 'vod'
+          AND vod.upload_date < ?
+        """,
+        (min_upload_date,),
+    ).fetchone()[0]
+
+    if referenced_count:
+        raise RuntimeError(
+            "Cannot prune VODs that are referenced by existing matches."
+        )
+
+    segment_count = conn.execute(
+        """
+        SELECT COUNT(*)
+        FROM segments
+        WHERE video_id IN (
+            SELECT id
+            FROM videos
+            WHERE kind = 'vod'
+              AND upload_date < ?
+        )
+        """,
+        (min_upload_date,),
+    ).fetchone()[0]
+    vod_count = conn.execute(
+        """
+        SELECT COUNT(*)
+        FROM videos
+        WHERE kind = 'vod'
+          AND upload_date < ?
+        """,
+        (min_upload_date,),
+    ).fetchone()[0]
+
+    conn.execute(
+        """
+        DELETE FROM segments
+        WHERE video_id IN (
+            SELECT id
+            FROM videos
+            WHERE kind = 'vod'
+              AND upload_date < ?
+        )
+        """,
+        (min_upload_date,),
+    )
+    conn.execute(
+        """
+        DELETE FROM videos
+        WHERE kind = 'vod'
+          AND upload_date < ?
+        """,
+        (min_upload_date,),
+    )
+
+    return vod_count, segment_count
+
+
+def get_matched_long_episode_ids(conn) -> set[int]:
+    rows = conn.execute(
+        """
+        SELECT long_episode_video_id
+        FROM episode_long_matches
+        WHERE long_episode_video_id IS NOT NULL
+        """
+    ).fetchall()
+
+    return {row[0] for row in rows}
+
+
 def get_videos_without_segments_by_kind(
-        conn, kind: str, limit: int
+        conn, kind: str, limit: int, min_upload_date: str | None = None
         ) -> list[tuple[int, str, str]]:
     rows = conn.execute(
         """
         SELECT v.id, v.youtube_id, v.webpage_url
         FROM videos v
         WHERE v.kind = ?
+          AND (? IS NULL OR v.upload_date >= ?)
           AND NOT EXISTS (
               SELECT 1
               FROM segments s
@@ -225,20 +328,21 @@ def get_videos_without_segments_by_kind(
         ORDER BY v.upload_date DESC
         LIMIT ?
         """,
-        (kind, limit),
+        (kind, min_upload_date, min_upload_date, limit),
     ).fetchall()
 
     return rows
 
 
 def get_videos_with_segments_by_kind(
-    conn, kind: str
+    conn, kind: str, min_upload_date: str | None = None
 ) -> list[tuple[int, str, str]]:
     rows = conn.execute(
         """
         SELECT v.id, v.youtube_id, v.title
         FROM videos v
         WHERE v.kind = ?
+          AND (? IS NULL OR v.upload_date >= ?)
           AND EXISTS (
               SELECT 1
               FROM segments s
@@ -246,7 +350,7 @@ def get_videos_with_segments_by_kind(
           )
         ORDER BY v.upload_date DESC
         """,
-        (kind,),
+        (kind, min_upload_date, min_upload_date),
     ).fetchall()
 
     return rows
