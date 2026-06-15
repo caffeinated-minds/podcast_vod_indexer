@@ -141,7 +141,8 @@ I public-page verification, X announcements, or automated tests.
 - [x] Stop tracking generated staging HTML in the source repository.
 - [x] Add `data/`, `output/`, logs, and backups to `.gitignore`.
 - [x] Create and configure an Azure Static Web Apps resource.
-- [ ] Create a private Azure Artifacts feed for full SQLite backups.
+  - [Link](https://lively-flower-08252b703.7.azurestaticapps.net/)
+- [x] Create a private Azure Artifacts feed for full SQLite backups.
 - [ ] Add `.env.example` with placeholder Spotify, X, and publishing settings.
 - [ ] Document how local state is backed up and restored.
 
