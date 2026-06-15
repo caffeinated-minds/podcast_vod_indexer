@@ -311,6 +311,40 @@ def get_matched_long_episode_ids(conn) -> set[int]:
     return {row[0] for row in rows}
 
 
+def get_video_durations_by_kind(conn, kind: str) -> dict[int, int]:
+    rows = conn.execute(
+        """
+        SELECT id, duration_seconds
+        FROM videos
+        WHERE kind = ?
+          AND duration_seconds IS NOT NULL
+        """,
+        (kind,),
+    ).fetchall()
+
+    return {row[0]: row[1] for row in rows}
+
+
+def remove_identical_duration_episode_long_matches(conn) -> int:
+    cursor = conn.execute(
+        """
+        DELETE FROM episode_long_matches
+        WHERE id IN (
+            SELECT match.id
+            FROM episode_long_matches match
+            JOIN videos episode
+                ON episode.id = match.short_episode_video_id
+            JOIN videos long_episode
+                ON long_episode.id = match.long_episode_video_id
+            WHERE episode.duration_seconds IS NOT NULL
+              AND episode.duration_seconds = long_episode.duration_seconds
+        )
+        """
+    )
+
+    return cursor.rowcount
+
+
 def get_videos_without_segments_by_kind(
         conn, kind: str, limit: int, min_upload_date: str | None = None
         ) -> list[tuple[int, str, str]]:

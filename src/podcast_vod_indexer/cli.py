@@ -11,7 +11,9 @@ from podcast_vod_indexer.db import (
     get_episode_long_match_for_episode,
     get_first_episode_matched_vod_date,
     get_matched_long_episode_ids,
+    get_video_durations_by_kind,
     prune_vods_before_date,
+    remove_identical_duration_episode_long_matches,
     upsert_match,
     upsert_episode_long_match,
 )
@@ -46,6 +48,16 @@ class TranscriptFetchResults:
     episode_ids: set[int] = field(default_factory=set)
     long_episode_ids: set[int] = field(default_factory=set)
     vod_ids: set[int] = field(default_factory=set)
+
+
+def have_identical_duration(
+    first_duration: int | None,
+    second_duration: int | None,
+) -> bool:
+    return (
+        first_duration is not None
+        and first_duration == second_duration
+    )
 
 
 def process_source(
@@ -351,6 +363,8 @@ def run_long_episode_matching(
 
     short_episodes = get_videos_with_segments_by_kind(conn, "episode")
     long_episodes = get_videos_with_segments_by_kind(conn, "episode_long")
+    short_episode_durations = get_video_durations_by_kind(conn, "episode")
+    long_episode_durations = get_video_durations_by_kind(conn, "episode_long")
 
     if not long_episodes:
         print("[long-episode-match] No long episodes with transcripts found")
@@ -390,6 +404,10 @@ def run_long_episode_matching(
                 long_episode
                 for long_episode in long_episodes
                 if long_episode[0] not in matched_long_episode_ids
+                and not have_identical_duration(
+                    short_episode_durations.get(episode_id),
+                    long_episode_durations.get(long_episode[0]),
+                )
             ]
         else:
             candidate_long_episodes = [
@@ -397,6 +415,10 @@ def run_long_episode_matching(
                 for long_episode in long_episodes
                 if long_episode[0] in new_long_episode_transcript_ids
                 and long_episode[0] not in matched_long_episode_ids
+                and not have_identical_duration(
+                    short_episode_durations.get(episode_id),
+                    long_episode_durations.get(long_episode[0]),
+                )
             ]
 
         if not candidate_long_episodes:
@@ -517,6 +539,17 @@ def main() -> None:
     init_db()
 
     with get_connection() as conn:
+        removed_identical_duration_matches = (
+            remove_identical_duration_episode_long_matches(conn)
+        )
+        if removed_identical_duration_matches:
+            print(
+                "[long-episode-match] Removed "
+                f"{removed_identical_duration_matches} identical-duration "
+                "match(es)"
+            )
+            conn.commit()
+
         vod_min_upload_date = get_first_episode_matched_vod_date(
             conn,
             MATCH_CONFIDENCE_CUTOFF,

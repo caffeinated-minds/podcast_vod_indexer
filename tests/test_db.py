@@ -4,10 +4,12 @@ from unittest.mock import patch
 
 from podcast_vod_indexer.db import (
     get_first_episode_matched_vod_date,
+    get_video_durations_by_kind,
     get_videos_with_segments_by_kind,
     get_videos_without_segments_by_kind,
     init_db,
     prune_vods_before_date,
+    remove_identical_duration_episode_long_matches,
 )
 
 
@@ -154,6 +156,57 @@ class DatabaseSchemaTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "referenced"):
             prune_vods_before_date(conn, "20250305")
 
+        conn.close()
+
+    def test_removes_identical_duration_episode_long_matches(self) -> None:
+        conn = sqlite3.connect(":memory:")
+
+        with patch(
+            "podcast_vod_indexer.db.get_connection",
+            return_value=conn,
+        ):
+            init_db()
+
+        conn.executemany(
+            """
+            INSERT INTO videos (id, youtube_id, kind, duration_seconds)
+            VALUES (?, ?, ?, ?)
+            """,
+            [
+                (1, "episode", "episode", 1200),
+                (2, "identical-long", "episode_long", 1200),
+                (3, "different-long", "episode_long", 1800),
+                (4, "another-episode", "episode", 1200),
+            ],
+        )
+        conn.executemany(
+            """
+            INSERT INTO episode_long_matches (
+                short_episode_video_id,
+                long_episode_video_id,
+                confidence
+            )
+            VALUES (?, ?, 0.20)
+            """,
+            [(1, 2), (4, 3)],
+        )
+
+        removed = remove_identical_duration_episode_long_matches(conn)
+
+        self.assertEqual(removed, 1)
+        self.assertEqual(
+            get_video_durations_by_kind(conn, "episode_long"),
+            {2: 1200, 3: 1800},
+        )
+        self.assertEqual(
+            conn.execute(
+                """
+                SELECT long_episode_video_id
+                FROM episode_long_matches
+                """
+            ).fetchall(),
+            [(3,)],
+        )
         conn.close()
 
 

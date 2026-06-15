@@ -138,6 +138,13 @@ def export_matches_html(conn: sqlite3.Connection) -> None:
         LEFT JOIN videos v ON v.id = m.vod_video_id
         LEFT JOIN episode_long_matches elm
             ON elm.short_episode_video_id = e.id
+            AND NOT EXISTS (
+                SELECT 1
+                FROM videos candidate_long
+                WHERE candidate_long.id = elm.long_episode_video_id
+                  AND e.duration_seconds IS NOT NULL
+                  AND candidate_long.duration_seconds = e.duration_seconds
+            )
         LEFT JOIN videos le ON le.id = elm.long_episode_video_id
         WHERE e.kind = 'episode'
         GROUP BY

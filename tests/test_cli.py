@@ -384,6 +384,37 @@ class NewlyAcceptedLongMatchTests(unittest.TestCase):
     @patch("podcast_vod_indexer.cli.find_long_episode_transcript_match")
     @patch("podcast_vod_indexer.cli.get_segments_for_video")
     @patch("podcast_vod_indexer.cli.get_matched_long_episode_ids")
+    @patch("podcast_vod_indexer.cli.get_video_durations_by_kind")
+    @patch("podcast_vod_indexer.cli.get_videos_with_segments_by_kind")
+    def test_does_not_compare_episodes_with_identical_durations(
+        self,
+        get_videos,
+        get_durations,
+        get_matched_long_ids,
+        get_segments,
+        find_match,
+        get_existing_match,
+        upsert_match,
+    ) -> None:
+        get_videos.side_effect = [
+            [(1, "episode-id", "Episode")],
+            [(2, "identical-long-id", "Identical Long")],
+        ]
+        get_durations.side_effect = [{1: 1200}, {2: 1200}]
+        get_matched_long_ids.return_value = set()
+        get_existing_match.return_value = None
+
+        run_long_episode_matching(MagicMock())
+
+        get_segments.assert_not_called()
+        find_match.assert_not_called()
+        upsert_match.assert_not_called()
+
+    @patch("podcast_vod_indexer.cli.upsert_episode_long_match")
+    @patch("podcast_vod_indexer.cli.get_episode_long_match_for_episode")
+    @patch("podcast_vod_indexer.cli.find_long_episode_transcript_match")
+    @patch("podcast_vod_indexer.cli.get_segments_for_video")
+    @patch("podcast_vod_indexer.cli.get_matched_long_episode_ids")
     @patch("podcast_vod_indexer.cli.get_videos_with_segments_by_kind")
     def test_returns_episode_that_newly_crosses_acceptance_threshold(
         self,
