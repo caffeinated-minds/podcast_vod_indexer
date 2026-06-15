@@ -4,6 +4,10 @@ from pathlib import Path
 from string import Template
 import sqlite3
 
+from podcast_vod_indexer.db import (
+    LONG_EPISODE_DURATION_TOLERANCE_SECONDS,
+)
+
 
 OUTPUT_PATH = Path("output/index.html")
 MATCH_CONFIDENCE_CUTOFF = 0.15
@@ -45,6 +49,7 @@ def render_rows(rows: list[tuple]) -> str:
         confidence,
         long_episode_url,
         long_episode_confidence,
+        long_episode_exclusion_reason,
     ) in rows:
         start_seconds = (
             int(matched_start_seconds)
@@ -90,6 +95,12 @@ def render_rows(rows: list[tuple]) -> str:
         else:
             long_episode_cell = ""
 
+        if (
+            not long_episode_cell
+            and long_episode_exclusion_reason == "equivalent_duration"
+        ):
+            long_episode_cell = "~ Equivalent upload (not needed)"
+
         html_rows.extend(
             [
                 "      <tr>",
@@ -131,7 +142,8 @@ def export_matches_html(conn: sqlite3.Connection) -> None:
             m.matched_start_seconds,
             m.confidence,
             le.webpage_url,
-            elm.confidence
+            elm.confidence,
+            ele.reason
         FROM videos e
         JOIN segments s ON s.video_id = e.id
         LEFT JOIN matches m ON m.episode_video_id = e.id
@@ -143,9 +155,12 @@ def export_matches_html(conn: sqlite3.Connection) -> None:
                 FROM videos candidate_long
                 WHERE candidate_long.id = elm.long_episode_video_id
                   AND e.duration_seconds IS NOT NULL
-                  AND candidate_long.duration_seconds = e.duration_seconds
+                  AND candidate_long.duration_seconds
+                      <= e.duration_seconds + ?
             )
         LEFT JOIN videos le ON le.id = elm.long_episode_video_id
+        LEFT JOIN episode_long_exclusions ele
+            ON ele.short_episode_video_id = e.id
         WHERE e.kind = 'episode'
         GROUP BY
             e.id,
@@ -158,9 +173,11 @@ def export_matches_html(conn: sqlite3.Connection) -> None:
             m.matched_start_seconds,
             m.confidence,
             le.webpage_url,
-            elm.confidence
+            elm.confidence,
+            ele.reason
         ORDER BY e.upload_date DESC
-        """
+        """,
+        (LONG_EPISODE_DURATION_TOLERANCE_SECONDS,),
     ).fetchall()
 
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)

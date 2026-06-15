@@ -2,6 +2,7 @@ import sqlite3
 from pathlib import Path
 
 DB_PATH = Path("data/index.db")
+LONG_EPISODE_DURATION_TOLERANCE_SECONDS = 5
 
 
 def get_connection() -> sqlite3.Connection:
@@ -61,6 +62,19 @@ def init_db() -> None:
                 long_episode_video_id INTEGER,
                 confidence REAL,
                 match_method TEXT,
+                FOREIGN KEY(short_episode_video_id) REFERENCES videos(id),
+                FOREIGN KEY(long_episode_video_id) REFERENCES videos(id)
+            )
+            """
+        )
+
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS episode_long_exclusions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                short_episode_video_id INTEGER UNIQUE,
+                long_episode_video_id INTEGER,
+                reason TEXT NOT NULL,
                 FOREIGN KEY(short_episode_video_id) REFERENCES videos(id),
                 FOREIGN KEY(long_episode_video_id) REFERENCES videos(id)
             )
@@ -325,7 +339,34 @@ def get_video_durations_by_kind(conn, kind: str) -> dict[int, int]:
     return {row[0]: row[1] for row in rows}
 
 
-def remove_identical_duration_episode_long_matches(conn) -> int:
+def remove_non_distinct_long_episode_matches(conn) -> int:
+    conn.execute(
+        """
+        INSERT INTO episode_long_exclusions (
+            short_episode_video_id,
+            long_episode_video_id,
+            reason
+        )
+        SELECT
+            match.short_episode_video_id,
+            match.long_episode_video_id,
+            'equivalent_duration'
+        FROM episode_long_matches match
+        JOIN videos episode
+            ON episode.id = match.short_episode_video_id
+        JOIN videos long_episode
+            ON long_episode.id = match.long_episode_video_id
+        WHERE episode.duration_seconds IS NOT NULL
+          AND long_episode.duration_seconds
+              <= episode.duration_seconds + ?
+        ON CONFLICT(short_episode_video_id)
+        DO UPDATE SET
+            long_episode_video_id = excluded.long_episode_video_id,
+            reason = excluded.reason
+        """,
+        (LONG_EPISODE_DURATION_TOLERANCE_SECONDS,),
+    )
+
     cursor = conn.execute(
         """
         DELETE FROM episode_long_matches
@@ -337,9 +378,11 @@ def remove_identical_duration_episode_long_matches(conn) -> int:
             JOIN videos long_episode
                 ON long_episode.id = match.long_episode_video_id
             WHERE episode.duration_seconds IS NOT NULL
-              AND episode.duration_seconds = long_episode.duration_seconds
+              AND long_episode.duration_seconds
+                  <= episode.duration_seconds + ?
         )
-        """
+        """,
+        (LONG_EPISODE_DURATION_TOLERANCE_SECONDS,),
     )
 
     return cursor.rowcount
@@ -428,6 +471,13 @@ def upsert_episode_long_match(
     confidence: float,
     match_method: str,
 ) -> None:
+    conn.execute(
+        """
+        DELETE FROM episode_long_exclusions
+        WHERE short_episode_video_id = ?
+        """,
+        (short_episode_video_id,),
+    )
     conn.execute(
         """
         INSERT INTO episode_long_matches (

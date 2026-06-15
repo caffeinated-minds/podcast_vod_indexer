@@ -17,6 +17,7 @@ class ExportHtmlTests(unittest.TestCase):
                 0.5,
                 "https://example.com/long-episode",
                 0.5,
+                None,
             )
         ]
 
@@ -30,6 +31,27 @@ class ExportHtmlTests(unittest.TestCase):
             'target="_blank" rel="noopener noreferrer">Episode</a>',
             html,
         )
+
+    def test_marks_equivalent_long_episode_as_not_needed(self) -> None:
+        rows = [
+            (
+                "Episode",
+                "https://example.com/episode",
+                "20260615",
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                "equivalent_duration",
+            )
+        ]
+
+        html = render_rows(rows)
+
+        self.assertIn("~ Equivalent upload (not needed)", html)
 
 
 if __name__ == "__main__":

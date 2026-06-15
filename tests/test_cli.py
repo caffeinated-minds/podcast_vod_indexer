@@ -386,7 +386,7 @@ class NewlyAcceptedLongMatchTests(unittest.TestCase):
     @patch("podcast_vod_indexer.cli.get_matched_long_episode_ids")
     @patch("podcast_vod_indexer.cli.get_video_durations_by_kind")
     @patch("podcast_vod_indexer.cli.get_videos_with_segments_by_kind")
-    def test_does_not_compare_episodes_with_identical_durations(
+    def test_does_not_compare_episodes_with_non_distinct_duration(
         self,
         get_videos,
         get_durations,
@@ -398,9 +398,13 @@ class NewlyAcceptedLongMatchTests(unittest.TestCase):
     ) -> None:
         get_videos.side_effect = [
             [(1, "episode-id", "Episode")],
-            [(2, "identical-long-id", "Identical Long")],
+            [
+                (2, "identical-long-id", "Identical Long"),
+                (3, "shorter-long-id", "Shorter Long"),
+                (4, "near-duplicate-long-id", "Near Duplicate Long"),
+            ],
         ]
-        get_durations.side_effect = [{1: 1200}, {2: 1200}]
+        get_durations.side_effect = [{1: 1200}, {2: 1200, 3: 900, 4: 1205}]
         get_matched_long_ids.return_value = set()
         get_existing_match.return_value = None
 

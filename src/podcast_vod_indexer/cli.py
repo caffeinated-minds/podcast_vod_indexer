@@ -1,4 +1,5 @@
 from podcast_vod_indexer.db import (
+    LONG_EPISODE_DURATION_TOLERANCE_SECONDS,
     init_db,
     get_connection,
     insert_video,
@@ -13,7 +14,7 @@ from podcast_vod_indexer.db import (
     get_matched_long_episode_ids,
     get_video_durations_by_kind,
     prune_vods_before_date,
-    remove_identical_duration_episode_long_matches,
+    remove_non_distinct_long_episode_matches,
     upsert_match,
     upsert_episode_long_match,
 )
@@ -50,13 +51,15 @@ class TranscriptFetchResults:
     vod_ids: set[int] = field(default_factory=set)
 
 
-def have_identical_duration(
-    first_duration: int | None,
-    second_duration: int | None,
+def is_distinct_long_episode(
+    episode_duration: int | None,
+    long_episode_duration: int | None,
 ) -> bool:
     return (
-        first_duration is not None
-        and first_duration == second_duration
+        episode_duration is None
+        or long_episode_duration is None
+        or long_episode_duration
+        > episode_duration + LONG_EPISODE_DURATION_TOLERANCE_SECONDS
     )
 
 
@@ -404,7 +407,7 @@ def run_long_episode_matching(
                 long_episode
                 for long_episode in long_episodes
                 if long_episode[0] not in matched_long_episode_ids
-                and not have_identical_duration(
+                and is_distinct_long_episode(
                     short_episode_durations.get(episode_id),
                     long_episode_durations.get(long_episode[0]),
                 )
@@ -415,7 +418,7 @@ def run_long_episode_matching(
                 for long_episode in long_episodes
                 if long_episode[0] in new_long_episode_transcript_ids
                 and long_episode[0] not in matched_long_episode_ids
-                and not have_identical_duration(
+                and is_distinct_long_episode(
                     short_episode_durations.get(episode_id),
                     long_episode_durations.get(long_episode[0]),
                 )
@@ -539,14 +542,15 @@ def main() -> None:
     init_db()
 
     with get_connection() as conn:
-        removed_identical_duration_matches = (
-            remove_identical_duration_episode_long_matches(conn)
+        removed_non_distinct_matches = (
+            remove_non_distinct_long_episode_matches(conn)
         )
-        if removed_identical_duration_matches:
+        if removed_non_distinct_matches:
             print(
                 "[long-episode-match] Removed "
-                f"{removed_identical_duration_matches} identical-duration "
-                "match(es)"
+                f"{removed_non_distinct_matches} match(es) where the long "
+                "episode was not more than "
+                f"{LONG_EPISODE_DURATION_TOLERANCE_SECONDS} seconds longer"
             )
             conn.commit()
 

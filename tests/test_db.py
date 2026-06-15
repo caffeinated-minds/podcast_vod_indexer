@@ -9,7 +9,7 @@ from podcast_vod_indexer.db import (
     get_videos_without_segments_by_kind,
     init_db,
     prune_vods_before_date,
-    remove_identical_duration_episode_long_matches,
+    remove_non_distinct_long_episode_matches,
 )
 
 
@@ -36,6 +36,7 @@ class DatabaseSchemaTests(unittest.TestCase):
 
         self.assertNotIn("spotify_episodes", tables)
         self.assertNotIn("spotify_matches", tables)
+        self.assertIn("episode_long_exclusions", tables)
         self.assertNotIn("spotify_url", video_columns)
         conn.close()
 
@@ -158,7 +159,7 @@ class DatabaseSchemaTests(unittest.TestCase):
 
         conn.close()
 
-    def test_removes_identical_duration_episode_long_matches(self) -> None:
+    def test_removes_non_distinct_long_episode_matches(self) -> None:
         conn = sqlite3.connect(":memory:")
 
         with patch(
@@ -175,8 +176,12 @@ class DatabaseSchemaTests(unittest.TestCase):
             [
                 (1, "episode", "episode", 1200),
                 (2, "identical-long", "episode_long", 1200),
-                (3, "different-long", "episode_long", 1800),
+                (3, "longer-long", "episode_long", 1800),
                 (4, "another-episode", "episode", 1200),
+                (5, "shorter-long", "episode_long", 900),
+                (6, "third-episode", "episode", 1200),
+                (7, "near-duplicate-long", "episode_long", 1205),
+                (8, "fourth-episode", "episode", 1200),
             ],
         )
         conn.executemany(
@@ -188,15 +193,15 @@ class DatabaseSchemaTests(unittest.TestCase):
             )
             VALUES (?, ?, 0.20)
             """,
-            [(1, 2), (4, 3)],
+            [(1, 2), (4, 3), (6, 5), (8, 7)],
         )
 
-        removed = remove_identical_duration_episode_long_matches(conn)
+        removed = remove_non_distinct_long_episode_matches(conn)
 
-        self.assertEqual(removed, 1)
+        self.assertEqual(removed, 3)
         self.assertEqual(
             get_video_durations_by_kind(conn, "episode_long"),
-            {2: 1200, 3: 1800},
+            {2: 1200, 3: 1800, 5: 900, 7: 1205},
         )
         self.assertEqual(
             conn.execute(
@@ -206,6 +211,20 @@ class DatabaseSchemaTests(unittest.TestCase):
                 """
             ).fetchall(),
             [(3,)],
+        )
+        self.assertEqual(
+            conn.execute(
+                """
+                SELECT short_episode_video_id, reason
+                FROM episode_long_exclusions
+                ORDER BY short_episode_video_id
+                """
+            ).fetchall(),
+            [
+                (1, "equivalent_duration"),
+                (6, "equivalent_duration"),
+                (8, "equivalent_duration"),
+            ],
         )
         conn.close()
 
