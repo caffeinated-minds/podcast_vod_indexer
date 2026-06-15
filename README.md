@@ -1,8 +1,8 @@
 # Podcast VOD Indexer
 
 Podcast VOD Indexer is a personal, locally operated pipeline for finding where
-episodes of The StandUp Podcast appear across YouTube livestream VODs,
-full-length YouTube episodes, and Spotify.
+episodes of The StandUp Podcast appear across YouTube livestream VODs and
+full-length YouTube episodes.
 
 The pipeline uses YouTube transcripts to match podcast episodes to their
 original livestream timestamps, stores its state in SQLite, and generates a
@@ -20,7 +20,6 @@ with one command.
 ```text
 preflight
 -> synchronize YouTube metadata and transcripts
--> synchronize Spotify episodes
 -> calculate new matches
 -> detect newly successful episode matches
 -> create and upload a private SQLite backup
@@ -96,8 +95,6 @@ versioned Azure Artifacts Universal Package for remote backup and recovery.
 Credentials remain local and must never be committed:
 
 - YouTube access through local browser cookies and the user keyring
-- `SPOTIFY_CLIENT_ID`
-- `SPOTIFY_CLIENT_SECRET`
 - X API credentials
 - Azure Static Web Apps deployment credentials
 - Azure DevOps credentials for private SQLite backups
@@ -128,10 +125,10 @@ The project currently:
 - Matches short episodes to VOD transcript windows.
 - Matches short episodes to full-length YouTube episodes.
 - Generates a static Bootstrap HTML index.
-- Contains an in-progress Spotify synchronization and matching implementation.
 
 It does not yet provide the complete one-command pipeline, artifact publishing,
-I public-page verification, X announcements, or automated tests.
+public-page verification, X announcements, or comprehensive automated test
+coverage.
 
 ## MVP Roadmap
 
@@ -143,22 +140,12 @@ I public-page verification, X announcements, or automated tests.
 - [x] Create and configure an Azure Static Web Apps resource.
   - [Link](https://lively-flower-08252b703.7.azurestaticapps.net/)
 - [x] Create a private Azure Artifacts feed for full SQLite backups.
-- [ ] Add `.env.example` with placeholder Spotify, X, and publishing settings.
+- [ ] Add `.env.example` with placeholder X and publishing settings.
 - [ ] Document how local state is backed up and restored.
 
-### 2. Finish Spotify Integration
+### 2. Define Match Success
 
-- [ ] Complete Spotify episode synchronization.
-- [ ] Validate Spotify matching against real episodes.
-- [ ] Define a Spotify-specific successful-match threshold.
-- [ ] Prevent weak candidates from displacing stronger existing matches.
-- [ ] Display successful Spotify links in the generated index.
-- [ ] Confirm the pipeline still works when Spotify credentials are unavailable.
-
-### 3. Define Match Success
-
-- [ ] Define separate confidence thresholds for VOD, full-episode, and Spotify
-      matches.
+- [ ] Define separate confidence thresholds for VOD and full-episode matches.
 - [ ] Distinguish successful, uncertain, and unmatched results.
 - [ ] Prevent weaker reruns from replacing stronger existing matches.
 - [ ] Add a durable record of when an episode first becomes successfully
@@ -167,7 +154,7 @@ I public-page verification, X announcements, or automated tests.
 - [ ] Manually evaluate a representative sample and document acceptable
       accuracy.
 
-### 4. Build the Pipeline CLI
+### 3. Build the Pipeline CLI
 
 - [ ] Add explicit `sync`, `match`, `export`, `publish`, and `announce`
       commands.
@@ -180,7 +167,7 @@ I public-page verification, X announcements, or automated tests.
       episodes.
 - [ ] Add a dry-run mode that performs no publication or X posting.
 
-### 5. Back Up SQLite Privately
+### 4. Back Up SQLite Privately
 
 - [ ] Configure access to a private Azure Artifacts feed.
 - [ ] Create a consistent full SQLite snapshot without copying an active write.
@@ -190,7 +177,7 @@ I public-page verification, X announcements, or automated tests.
 - [ ] Record the backup package version and result in SQLite.
 - [ ] Test restoring a backup into a separate local path.
 
-### 6. Publish Static HTML and CSV
+### 5. Publish Static HTML and CSV
 
 - [ ] Configure Azure Static Web Apps and its local deployment credentials.
 - [ ] Validate generated HTML before deployment.
@@ -205,7 +192,7 @@ I public-page verification, X announcements, or automated tests.
 - [ ] Verify the public page is reachable before allowing announcements.
 - [ ] Ensure failed or incomplete indexing runs cannot publish broken output.
 
-### 7. Announce New Matches on X
+### 6. Announce New Matches on X
 
 - [ ] Configure X API credentials locally.
 - [ ] Add an announcement table with unique constraints preventing duplicates.
@@ -216,7 +203,7 @@ I public-page verification, X announcements, or automated tests.
 - [ ] Record failures and safely retry them on later runs.
 - [ ] Confirm dry-run output clearly shows proposed posts.
 
-### 8. Add Reliability Coverage
+### 7. Add Reliability Coverage
 
 - [ ] Add tests for title, transcript, date, and duration similarity.
 - [ ] Add tests for match selection and confidence thresholds.
@@ -229,7 +216,7 @@ I public-page verification, X announcements, or automated tests.
 - [ ] Back up SQLite before schema migrations or risky operations.
 - [ ] Handle YouTube rate limits and locked-keyring failures explicitly.
 
-### 9. Add Local Automation
+### 8. Add Local Automation
 
 - [ ] Add a Makefile containing convenience commands only.
 - [ ] Add a version-controlled `systemd --user` service.
@@ -238,7 +225,7 @@ I public-page verification, X announcements, or automated tests.
       keyring.
 - [ ] Confirm failures are visible through logs and do not publish or announce.
 
-### 10. MVP Acceptance
+### 9. MVP Acceptance
 
 - [ ] A single local command completes sync, matching, export, publication, and
       announcement.

@@ -45,8 +45,6 @@ def render_rows(rows: list[tuple]) -> str:
         confidence,
         long_episode_url,
         long_episode_confidence,
-        matched_spotify_url,
-        spotify_match_confidence,
     ) in rows:
         start_seconds = (
             int(matched_start_seconds)
@@ -92,16 +90,6 @@ def render_rows(rows: list[tuple]) -> str:
         else:
             long_episode_cell = ""
 
-        if (
-            matched_spotify_url is not None
-            and spotify_match_confidence is not None
-            and spotify_match_confidence >= MATCH_CONFIDENCE_CUTOFF
-        ):
-            spotify_url = matched_spotify_url
-            spotify_cell = link_cell(spotify_url, "Open", new_tab=True)
-        else:
-            spotify_cell = ""
-
         html_rows.extend(
             [
                 "      <tr>",
@@ -109,7 +97,6 @@ def render_rows(rows: list[tuple]) -> str:
                 f"{link_cell(episode_url, episode_title)}</td>",
                 f"        <td>{escape(episode_date or '')}</td>",
                 f"        <td>{long_episode_cell}</td>",
-                f"        <td>{spotify_cell}</td>",
                 f"        <td>{vod_title_cell}</td>",
                 f"        <td>{vod_date_cell}</td>",
                 f"        <td>{start_time_cell}</td>",
@@ -144,9 +131,7 @@ def export_matches_html(conn: sqlite3.Connection) -> None:
             m.matched_start_seconds,
             m.confidence,
             le.webpage_url,
-            elm.confidence,
-            se.spotify_url,
-            sm.confidence
+            elm.confidence
         FROM videos e
         JOIN segments s ON s.video_id = e.id
         LEFT JOIN matches m ON m.episode_video_id = e.id
@@ -154,8 +139,6 @@ def export_matches_html(conn: sqlite3.Connection) -> None:
         LEFT JOIN episode_long_matches elm
             ON elm.short_episode_video_id = e.id
         LEFT JOIN videos le ON le.id = elm.long_episode_video_id
-        LEFT JOIN spotify_matches sm ON sm.episode_video_id = e.id
-        LEFT JOIN spotify_episodes se ON se.id = sm.spotify_episode_id
         WHERE e.kind = 'episode'
         GROUP BY
             e.id,
@@ -168,9 +151,7 @@ def export_matches_html(conn: sqlite3.Connection) -> None:
             m.matched_start_seconds,
             m.confidence,
             le.webpage_url,
-            elm.confidence,
-            se.spotify_url,
-            sm.confidence
+            elm.confidence
         ORDER BY e.upload_date DESC
         """
     ).fetchall()

@@ -275,11 +275,9 @@ class NewlyAcceptedLongMatchTests(unittest.TestCase):
 
 class MainTriggerFlowTests(unittest.TestCase):
     @patch("podcast_vod_indexer.cli.export_matches_html")
-    @patch("podcast_vod_indexer.cli.run_spotify_matching")
     @patch("podcast_vod_indexer.cli.run_matching")
     @patch("podcast_vod_indexer.cli.run_long_episode_matching")
     @patch("podcast_vod_indexer.cli.fetch_missing_transcripts_with_budget")
-    @patch("podcast_vod_indexer.cli.process_spotify_show")
     @patch("podcast_vod_indexer.cli.process_source")
     @patch("podcast_vod_indexer.cli.get_connection")
     @patch("podcast_vod_indexer.cli.init_db")
@@ -288,11 +286,9 @@ class MainTriggerFlowTests(unittest.TestCase):
         init_db,
         get_connection,
         process_source,
-        process_spotify_show,
         fetch_transcripts,
         run_long_matching,
         run_vod_matching,
-        run_spotify_matching,
         export_html,
     ) -> None:
         conn = MagicMock()
