@@ -39,6 +39,8 @@ from podcast_vod_indexer.export import export_matches_html
 import argparse
 from collections.abc import Callable
 from dataclasses import dataclass, field
+import select
+import sys
 import time
 
 
@@ -52,6 +54,7 @@ LONG_EPISODE_MATCH_METHOD = "transcript_short15m_long45m_window15m"
 DEEP_VOD_EPISODE_STEP_SECONDS = 5 * 60
 DEEP_VOD_STEP_SECONDS = 60
 DEEP_VOD_TOP_CANDIDATES = 5
+DEEP_VOD_PROMPT_TIMEOUT_SECONDS = 30
 
 
 @dataclass
@@ -83,14 +86,35 @@ def confirm_continue_deep_vod_search(
     if remaining_count <= 0:
         return False
 
+    prompt = (
+        "[deep-vod-match] No accepted match found in the top "
+        f"{DEEP_VOD_TOP_CANDIDATES} ranked VODs for "
+        f"'{episode_title}'. Check the remaining {remaining_count} VOD(s)? "
+        f"[y/N, timeout {DEEP_VOD_PROMPT_TIMEOUT_SECONDS}s] "
+    )
+    print(prompt, end="", flush=True)
+
     try:
-        answer = input(
-            "[deep-vod-match] No accepted match found in the top "
-            f"{DEEP_VOD_TOP_CANDIDATES} ranked VODs for "
-            f"'{episode_title}'. Check the remaining "
-            f"{remaining_count} VOD(s)? [y/N] "
+        ready, _, _ = select.select(
+            [sys.stdin],
+            [],
+            [],
+            DEEP_VOD_PROMPT_TIMEOUT_SECONDS,
         )
-    except (EOFError, OSError):
+    except (OSError, ValueError):
+        print("[deep-vod-match] No input available, skipping remaining VODs")
+        return False
+
+    if not ready:
+        print()
+        print(
+            "[deep-vod-match] No response before timeout, "
+            "skipping remaining VODs"
+        )
+        return False
+
+    answer = sys.stdin.readline()
+    if not answer:
         print("[deep-vod-match] No input available, skipping remaining VODs")
         return False
 

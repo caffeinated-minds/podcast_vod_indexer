@@ -3,6 +3,7 @@ from unittest.mock import MagicMock, call, patch
 
 from podcast_vod_indexer.cli import (
     TranscriptFetchResults,
+    confirm_continue_deep_vod_search,
     fetch_missing_transcripts_with_budget,
     fetch_transcripts_for_videos,
     main,
@@ -64,6 +65,44 @@ class SourceProcessingTests(unittest.TestCase):
                 "upload_date": "20250306",
             },
         )
+
+
+class DeepVodPromptTests(unittest.TestCase):
+    @patch("podcast_vod_indexer.cli.sys.stdin")
+    @patch("podcast_vod_indexer.cli.select.select")
+    def test_continue_prompt_accepts_yes(
+        self,
+        select_ready,
+        stdin,
+    ) -> None:
+        select_ready.return_value = ([stdin], [], [])
+        stdin.readline.return_value = "yes\n"
+
+        self.assertTrue(confirm_continue_deep_vod_search("Episode", 3))
+
+    @patch("podcast_vod_indexer.cli.sys.stdin")
+    @patch("podcast_vod_indexer.cli.select.select")
+    def test_continue_prompt_times_out_to_no(
+        self,
+        select_ready,
+        stdin,
+    ) -> None:
+        select_ready.return_value = ([], [], [])
+
+        self.assertFalse(confirm_continue_deep_vod_search("Episode", 3))
+        stdin.readline.assert_not_called()
+
+    @patch("podcast_vod_indexer.cli.sys.stdin")
+    @patch("podcast_vod_indexer.cli.select.select")
+    def test_continue_prompt_defaults_to_no_without_stdin(
+        self,
+        select_ready,
+        stdin,
+    ) -> None:
+        select_ready.side_effect = OSError
+
+        self.assertFalse(confirm_continue_deep_vod_search("Episode", 3))
+        stdin.readline.assert_not_called()
 
 
 class LowConfidenceRetryTests(unittest.TestCase):
