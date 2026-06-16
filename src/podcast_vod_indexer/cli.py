@@ -31,10 +31,13 @@ from podcast_vod_indexer.matching import (
     find_best_window_pair_match,
     find_long_episode_transcript_match,
     refine_low_confidence_window_match,
+    token_overlap_score,
+    transcript_tokens,
 )
 from podcast_vod_indexer.export import export_matches_html
 
 import argparse
+from collections.abc import Callable
 from dataclasses import dataclass, field
 import time
 
@@ -48,6 +51,7 @@ LONG_EPISODE_STEP_SECONDS = 2 * 60
 LONG_EPISODE_MATCH_METHOD = "transcript_short15m_long45m_window15m"
 DEEP_VOD_EPISODE_STEP_SECONDS = 5 * 60
 DEEP_VOD_STEP_SECONDS = 60
+DEEP_VOD_TOP_CANDIDATES = 5
 
 
 @dataclass
@@ -70,6 +74,27 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
     )
     return parser.parse_args(argv)
+
+
+def confirm_continue_deep_vod_search(
+    episode_title: str,
+    remaining_count: int,
+) -> bool:
+    if remaining_count <= 0:
+        return False
+
+    try:
+        answer = input(
+            "[deep-vod-match] No accepted match found in the top "
+            f"{DEEP_VOD_TOP_CANDIDATES} ranked VODs for "
+            f"'{episode_title}'. Check the remaining "
+            f"{remaining_count} VOD(s)? [y/N] "
+        )
+    except (EOFError, OSError):
+        print("[deep-vod-match] No input available, skipping remaining VODs")
+        return False
+
+    return answer.strip().lower() in {"y", "yes"}
 
 
 def process_source(
@@ -368,6 +393,9 @@ def run_deep_vod_matching(
     conn,
     *,
     vod_min_upload_date: str | None = None,
+    confirm_continue: Callable[[str, int], bool] = (
+        confirm_continue_deep_vod_search
+    ),
 ) -> dict[str, int]:
     episodes = get_videos_with_segments_by_kind_and_date(conn, "episode")
     vods = get_videos_with_segments_by_kind_and_date(
@@ -406,38 +434,93 @@ def run_deep_vod_matching(
 
         summary["checked"] += 1
         episode_segments = get_segments_for_video(conn, episode_id)
+        episode_tokens = transcript_tokens(episode_segments)
+        ranked_candidates = []
+
+        print(f"[deep-vod-match] Episode: {episode_title}")
+        print(
+            f"  -> ranking {len(candidate_vods)} candidate VOD(s) "
+            "by token overlap"
+        )
+
+        for vod in candidate_vods:
+            vod_id = vod[0]
+            vod_segments = get_segments_for_video(conn, vod_id)
+            ranked_candidates.append(
+                {
+                    "vod": vod,
+                    "segments": vod_segments,
+                    "rank_score": token_overlap_score(
+                        episode_tokens,
+                        transcript_tokens(vod_segments),
+                    ),
+                }
+            )
+
+        ranked_candidates.sort(
+            key=lambda candidate: candidate["rank_score"],
+            reverse=True,
+        )
+
         best_vod_id = None
         best_window_start = None
         best_score = -1.0
+        accepted_match_found = False
 
-        print(f"[deep-vod-match] Episode: {episode_title}")
+        def search_candidates(candidates: list[dict]) -> bool:
+            nonlocal best_vod_id, best_window_start, best_score
 
-        for vod_id, _, vod_title, _ in candidate_vods:
-            match = find_best_window_pair_match(
-                episode_segments,
-                get_segments_for_video(conn, vod_id),
-                window_seconds=900.0,
-                episode_step_seconds=DEEP_VOD_EPISODE_STEP_SECONDS,
-                vod_step_seconds=DEEP_VOD_STEP_SECONDS,
-            )
-            if match is None:
-                continue
-
-            if match["score"] > best_score:
-                best_vod_id = vod_id
-                best_window_start = match["start"]
-                best_score = match["score"]
-                print(
-                    f"  -> best so far: {vod_title} "
-                    f"({best_score * 100:.2f}%)"
+            for candidate in candidates:
+                vod_id, _, vod_title, _ = candidate["vod"]
+                match = find_best_window_pair_match(
+                    episode_segments,
+                    candidate["segments"],
+                    window_seconds=900.0,
+                    episode_step_seconds=DEEP_VOD_EPISODE_STEP_SECONDS,
+                    vod_step_seconds=DEEP_VOD_STEP_SECONDS,
                 )
-                if best_score >= MATCH_CONFIDENCE_CUTOFF:
-                    print("  -> accepted match found, moving on")
-                    break
+                if match is None:
+                    continue
 
-        if best_vod_id is None or best_window_start is None:
-            summary["no_candidate"] += 1
-            print("  -> no candidate found")
+                if match["score"] > best_score:
+                    best_vod_id = vod_id
+                    best_window_start = match["start"]
+                    best_score = match["score"]
+                    print(
+                        f"  -> best so far: {vod_title} "
+                        f"({best_score * 100:.2f}%, "
+                        f"token rank {candidate['rank_score'] * 100:.2f}%)"
+                    )
+                    if best_score >= MATCH_CONFIDENCE_CUTOFF:
+                        print("  -> accepted match found, moving on")
+                        return True
+
+            return False
+
+        top_candidates = ranked_candidates[:DEEP_VOD_TOP_CANDIDATES]
+        remaining_candidates = ranked_candidates[DEEP_VOD_TOP_CANDIDATES:]
+
+        accepted_match_found = search_candidates(top_candidates)
+        if not accepted_match_found and remaining_candidates:
+            if confirm_continue(episode_title, len(remaining_candidates)):
+                accepted_match_found = search_candidates(remaining_candidates)
+            else:
+                print("  -> skipped remaining ranked VOD candidates")
+
+        if (
+            not accepted_match_found
+            or best_vod_id is None
+            or best_window_start is None
+        ):
+            if existing_confidence is None:
+                summary["no_candidate"] += 1
+                print("  -> no accepted candidate found")
+            else:
+                summary["unchanged"] += 1
+                print(
+                    f"  -> kept existing candidate "
+                    f"({existing_confidence * 100:.2f}%)"
+                )
             continue
 
         if (

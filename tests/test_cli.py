@@ -463,9 +463,13 @@ class DeepVodMatchingTests(unittest.TestCase):
         first_vod_segments = [
             {"start": 0.0, "duration": 10.0, "text": "vod"}
         ]
+        second_vod_segments = [
+            {"start": 0.0, "duration": 10.0, "text": "other"}
+        ]
         get_segments.side_effect = lambda _conn, video_id: {
             1: episode_segments,
             10: first_vod_segments,
+            11: second_vod_segments,
         }[video_id]
         find_match.return_value = {
             "episode_start": 0.0,
@@ -483,15 +487,233 @@ class DeepVodMatchingTests(unittest.TestCase):
             [
                 call(conn, 1),
                 call(conn, 10),
+                call(conn, 11),
             ]
         )
-        self.assertEqual(get_segments.call_count, 2)
+        self.assertEqual(get_segments.call_count, 3)
         find_match.assert_called_once()
         upsert_match.assert_called_once_with(
             conn,
             episode_video_id=1,
             vod_video_id=10,
             matched_start_seconds=900.0,
+            confidence=0.16,
+        )
+
+    @patch("podcast_vod_indexer.cli.upsert_match")
+    @patch("podcast_vod_indexer.cli.find_best_window_pair_match")
+    @patch("podcast_vod_indexer.cli.get_segments_for_video")
+    @patch("podcast_vod_indexer.cli.get_match_confidence_for_episode")
+    @patch("podcast_vod_indexer.cli.get_videos_with_segments_by_kind_and_date")
+    def test_deep_checks_token_ranked_vods_before_date_order(
+        self,
+        get_videos,
+        get_confidence,
+        get_segments,
+        find_match,
+        upsert_match,
+    ) -> None:
+        get_videos.side_effect = [
+            [(1, "episode", "Episode", "20250310")],
+            [
+                (10, "newer-vod", "Newer VOD", "20250309"),
+                (11, "better-ranked-vod", "Better Ranked VOD", "20250308"),
+            ],
+        ]
+        get_confidence.return_value = None
+        episode_segments = [
+            {
+                "start": 0.0,
+                "duration": 10.0,
+                "text": "kubernetes ingress latency controller",
+            }
+        ]
+        newer_vod_segments = [
+            {"start": 0.0, "duration": 10.0, "text": "banana violin airport"}
+        ]
+        better_ranked_segments = [
+            {
+                "start": 0.0,
+                "duration": 10.0,
+                "text": "kubernetes ingress latency routing",
+            }
+        ]
+        get_segments.side_effect = lambda _conn, video_id: {
+            1: episode_segments,
+            10: newer_vod_segments,
+            11: better_ranked_segments,
+        }[video_id]
+        find_match.return_value = {
+            "episode_start": 0.0,
+            "episode_end": 900.0,
+            "start": 900.0,
+            "end": 1800.0,
+            "score": 0.16,
+        }
+        conn = MagicMock()
+
+        run_deep_vod_matching(conn)
+
+        find_match.assert_called_once_with(
+            episode_segments,
+            better_ranked_segments,
+            window_seconds=900.0,
+            episode_step_seconds=300,
+            vod_step_seconds=60,
+        )
+        upsert_match.assert_called_once_with(
+            conn,
+            episode_video_id=1,
+            vod_video_id=11,
+            matched_start_seconds=900.0,
+            confidence=0.16,
+        )
+
+    @patch("podcast_vod_indexer.cli.upsert_match")
+    @patch("podcast_vod_indexer.cli.find_best_window_pair_match")
+    @patch("podcast_vod_indexer.cli.get_segments_for_video")
+    @patch("podcast_vod_indexer.cli.get_match_confidence_for_episode")
+    @patch("podcast_vod_indexer.cli.get_videos_with_segments_by_kind_and_date")
+    def test_prompts_before_searching_beyond_top_ranked_vods(
+        self,
+        get_videos,
+        get_confidence,
+        get_segments,
+        find_match,
+        upsert_match,
+    ) -> None:
+        get_videos.side_effect = [
+            [(1, "episode", "Episode", "20250310")],
+            [
+                (
+                    vod_id,
+                    f"vod-{vod_id}",
+                    f"VOD {vod_id}",
+                    f"2025030{vod_id}",
+                )
+                for vod_id in range(2, 8)
+            ],
+        ]
+        get_confidence.return_value = None
+        get_segments.side_effect = lambda _conn, video_id: [
+            {
+                "start": 0.0,
+                "duration": 10.0,
+                "text": f"episode shared token {video_id}",
+            }
+        ]
+        find_match.return_value = {
+            "episode_start": 0.0,
+            "episode_end": 900.0,
+            "start": 900.0,
+            "end": 1800.0,
+            "score": 0.10,
+        }
+        confirm_continue = MagicMock(return_value=False)
+
+        summary = run_deep_vod_matching(
+            MagicMock(),
+            confirm_continue=confirm_continue,
+        )
+
+        self.assertEqual(summary["no_candidate"], 1)
+        self.assertEqual(find_match.call_count, 5)
+        confirm_continue.assert_called_once_with("Episode", 1)
+        upsert_match.assert_not_called()
+
+    @patch("podcast_vod_indexer.cli.upsert_match")
+    @patch("podcast_vod_indexer.cli.find_best_window_pair_match")
+    @patch("podcast_vod_indexer.cli.get_segments_for_video")
+    @patch("podcast_vod_indexer.cli.get_match_confidence_for_episode")
+    @patch("podcast_vod_indexer.cli.get_videos_with_segments_by_kind_and_date")
+    def test_continues_beyond_top_ranked_vods_when_confirmed(
+        self,
+        get_videos,
+        get_confidence,
+        get_segments,
+        find_match,
+        upsert_match,
+    ) -> None:
+        get_videos.side_effect = [
+            [(1, "episode", "Episode", "20250310")],
+            [
+                (
+                    vod_id,
+                    f"vod-{vod_id}",
+                    f"VOD {vod_id}",
+                    f"2025030{vod_id}",
+                )
+                for vod_id in range(2, 8)
+            ],
+        ]
+        get_confidence.return_value = None
+        get_segments.side_effect = lambda _conn, video_id: [
+            {
+                "start": 0.0,
+                "duration": 10.0,
+                "text": f"episode shared token {video_id}",
+            }
+        ]
+        find_match.side_effect = [
+            {
+                "episode_start": 0.0,
+                "episode_end": 900.0,
+                "start": 900.0,
+                "end": 1800.0,
+                "score": 0.10,
+            },
+            {
+                "episode_start": 0.0,
+                "episode_end": 900.0,
+                "start": 900.0,
+                "end": 1800.0,
+                "score": 0.11,
+            },
+            {
+                "episode_start": 0.0,
+                "episode_end": 900.0,
+                "start": 900.0,
+                "end": 1800.0,
+                "score": 0.12,
+            },
+            {
+                "episode_start": 0.0,
+                "episode_end": 900.0,
+                "start": 900.0,
+                "end": 1800.0,
+                "score": 0.13,
+            },
+            {
+                "episode_start": 0.0,
+                "episode_end": 900.0,
+                "start": 900.0,
+                "end": 1800.0,
+                "score": 0.14,
+            },
+            {
+                "episode_start": 0.0,
+                "episode_end": 900.0,
+                "start": 1200.0,
+                "end": 2100.0,
+                "score": 0.16,
+            },
+        ]
+        confirm_continue = MagicMock(return_value=True)
+        conn = MagicMock()
+
+        summary = run_deep_vod_matching(
+            conn,
+            confirm_continue=confirm_continue,
+        )
+
+        self.assertEqual(summary["improved"], 1)
+        self.assertEqual(find_match.call_count, 6)
+        confirm_continue.assert_called_once_with("Episode", 1)
+        upsert_match.assert_called_once_with(
+            conn,
+            episode_video_id=1,
+            vod_video_id=7,
+            matched_start_seconds=1200.0,
             confidence=0.16,
         )
 

@@ -82,6 +82,17 @@ def meaningful_tokens(text: str) -> set[str]:
     }
 
 
+def transcript_tokens(segments: list[dict]) -> set[str]:
+    return meaningful_tokens(join_segment_text(segments))
+
+
+def token_overlap_score(a_tokens: set[str], b_tokens: set[str]) -> float:
+    if not a_tokens or not b_tokens:
+        return 0.0
+
+    return len(a_tokens & b_tokens) / min(len(a_tokens), len(b_tokens))
+
+
 def has_plausible_token_overlap(
     a_tokens: set[str],
     b_tokens: set[str],
