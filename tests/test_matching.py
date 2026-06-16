@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 from podcast_vod_indexer.matching import (
     find_best_window_pair_match,
@@ -86,6 +87,54 @@ class DeepWindowPairMatchTests(unittest.TestCase):
         self.assertEqual(match["episode_start"], 60.0)
         self.assertEqual(match["start"], 60.0)
         self.assertEqual(match["score"], 1.0)
+
+    @patch("podcast_vod_indexer.matching.similarity_score")
+    def test_skips_expensive_similarity_for_unrelated_windows(
+        self,
+        similarity_score,
+    ) -> None:
+        episode_segments = [
+            segment(0.0, 60.0, "kubernetes cluster ingress latency"),
+        ]
+        vod_segments = [
+            segment(0.0, 60.0, "banana violin airport ceramic"),
+        ]
+
+        match = find_best_window_pair_match(
+            episode_segments,
+            vod_segments,
+            window_seconds=60.0,
+            episode_step_seconds=60.0,
+            vod_step_seconds=60.0,
+        )
+
+        self.assertIsNone(match)
+        similarity_score.assert_not_called()
+
+    @patch("podcast_vod_indexer.matching.similarity_score")
+    def test_runs_expensive_similarity_for_overlapping_windows(
+        self,
+        similarity_score,
+    ) -> None:
+        similarity_score.return_value = 0.42
+        episode_segments = [
+            segment(0.0, 60.0, "kubernetes cluster ingress latency"),
+        ]
+        vod_segments = [
+            segment(0.0, 60.0, "kubernetes ingress routing latency"),
+        ]
+
+        match = find_best_window_pair_match(
+            episode_segments,
+            vod_segments,
+            window_seconds=60.0,
+            episode_step_seconds=60.0,
+            vod_step_seconds=60.0,
+        )
+
+        self.assertIsNotNone(match)
+        self.assertEqual(match["score"], 0.42)
+        similarity_score.assert_called_once()
 
 
 if __name__ == "__main__":

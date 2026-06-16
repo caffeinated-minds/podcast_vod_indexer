@@ -14,6 +14,57 @@ TITLE_STOP_WORDS = {
     "to",
 }
 
+TRANSCRIPT_STOP_WORDS = {
+    "about",
+    "actually",
+    "after",
+    "again",
+    "all",
+    "also",
+    "and",
+    "any",
+    "are",
+    "because",
+    "been",
+    "but",
+    "can",
+    "did",
+    "does",
+    "for",
+    "from",
+    "get",
+    "had",
+    "has",
+    "have",
+    "how",
+    "into",
+    "just",
+    "like",
+    "not",
+    "now",
+    "one",
+    "out",
+    "really",
+    "right",
+    "see",
+    "that",
+    "the",
+    "then",
+    "there",
+    "they",
+    "this",
+    "was",
+    "what",
+    "when",
+    "with",
+    "would",
+    "yeah",
+    "you",
+}
+
+TOKEN_RE = re.compile(r"[a-z0-9][a-z0-9']+")
+DEFAULT_MIN_TOKEN_OVERLAP = 0.03
+
 
 def join_segment_text(segments: list[dict]) -> str:
     return " ".join(segment["text"] for segment in segments)
@@ -21,6 +72,32 @@ def join_segment_text(segments: list[dict]) -> str:
 
 def similarity_score(a: str, b: str) -> float:
     return SequenceMatcher(None, a, b).ratio()
+
+
+def meaningful_tokens(text: str) -> set[str]:
+    return {
+        token
+        for token in TOKEN_RE.findall(text.lower())
+        if len(token) >= 3 and token not in TRANSCRIPT_STOP_WORDS
+    }
+
+
+def has_plausible_token_overlap(
+    a_tokens: set[str],
+    b_tokens: set[str],
+    min_overlap: float,
+) -> bool:
+    if not a_tokens or not b_tokens:
+        return True
+
+    overlap = len(a_tokens & b_tokens)
+    if overlap == 0:
+        return False
+
+    if min_overlap <= 0:
+        return True
+
+    return overlap / min(len(a_tokens), len(b_tokens)) >= min_overlap
 
 
 def normalize_title(title: str) -> str:
@@ -204,6 +281,7 @@ def find_best_window_pair_match(
     episode_step_seconds: float = 300.0,
     vod_step_seconds: float = 60.0,
     char_limit: int = 5000,
+    min_token_overlap: float = DEFAULT_MIN_TOKEN_OVERLAP,
 ) -> dict | None:
     episode_windows = build_windows(
         episode_segments,
@@ -219,13 +297,35 @@ def find_best_window_pair_match(
     best_match = None
     best_score = -1.0
 
-    for episode_window in episode_windows:
-        episode_text = episode_window["text"][:char_limit]
+    episode_window_data = [
+        (
+            episode_window,
+            episode_window["text"][:char_limit],
+            meaningful_tokens(episode_window["text"][:char_limit]),
+        )
+        for episode_window in episode_windows
+    ]
+    vod_window_data = [
+        (
+            vod_window,
+            vod_window["text"][:char_limit],
+            meaningful_tokens(vod_window["text"][:char_limit]),
+        )
+        for vod_window in vod_windows
+    ]
 
-        for vod_window in vod_windows:
+    for episode_window, episode_text, episode_tokens in episode_window_data:
+        for vod_window, vod_text, vod_tokens in vod_window_data:
+            if not has_plausible_token_overlap(
+                episode_tokens,
+                vod_tokens,
+                min_token_overlap,
+            ):
+                continue
+
             score = similarity_score(
                 episode_text,
-                vod_window["text"][:char_limit],
+                vod_text,
             )
 
             if score > best_score:
