@@ -1,6 +1,9 @@
 import unittest
 
-from podcast_vod_indexer.matching import refine_low_confidence_window_match
+from podcast_vod_indexer.matching import (
+    find_best_window_pair_match,
+    refine_low_confidence_window_match,
+)
 
 
 def segment(start: float, duration: float, text: str) -> dict:
@@ -58,6 +61,31 @@ class RefineLowConfidenceWindowMatchTests(unittest.TestCase):
 
         self.assertIsNotNone(match)
         self.assertEqual(match["start"], 0.0)
+
+
+class DeepWindowPairMatchTests(unittest.TestCase):
+    def test_finds_later_episode_window_against_vod_windows(self) -> None:
+        episode_segments = [
+            segment(0.0, 60.0, "unrelated episode opening"),
+            segment(60.0, 60.0, "shared discussion about editors"),
+        ]
+        vod_segments = [
+            segment(0.0, 60.0, "unrelated vod opening"),
+            segment(60.0, 60.0, "shared discussion about editors"),
+        ]
+
+        match = find_best_window_pair_match(
+            episode_segments,
+            vod_segments,
+            window_seconds=60.0,
+            episode_step_seconds=60.0,
+            vod_step_seconds=60.0,
+        )
+
+        self.assertIsNotNone(match)
+        self.assertEqual(match["episode_start"], 60.0)
+        self.assertEqual(match["start"], 60.0)
+        self.assertEqual(match["score"], 1.0)
 
 
 if __name__ == "__main__":

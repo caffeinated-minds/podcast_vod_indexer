@@ -456,6 +456,28 @@ def get_videos_with_segments_by_kind(
     return rows
 
 
+def get_videos_with_segments_by_kind_and_date(
+    conn, kind: str, min_upload_date: str | None = None
+) -> list[tuple[int, str, str, str | None]]:
+    rows = conn.execute(
+        """
+        SELECT v.id, v.youtube_id, v.title, v.upload_date
+        FROM videos v
+        WHERE v.kind = ?
+          AND (? IS NULL OR v.upload_date >= ?)
+          AND EXISTS (
+              SELECT 1
+              FROM segments s
+              WHERE s.video_id = v.id
+          )
+        ORDER BY v.upload_date DESC
+        """,
+        (kind, min_upload_date, min_upload_date),
+    ).fetchall()
+
+    return rows
+
+
 def upsert_match(
     conn,
     episode_video_id: int,

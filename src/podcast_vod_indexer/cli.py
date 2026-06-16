@@ -7,6 +7,7 @@ from podcast_vod_indexer.db import (
     get_video_id_by_youtube_id,
     get_videos_without_segments_by_kind,
     get_videos_with_segments_by_kind,
+    get_videos_with_segments_by_kind_and_date,
     get_segments_for_video,
     get_match_confidence_for_episode,
     get_episode_long_match_for_episode,
@@ -27,11 +28,13 @@ from podcast_vod_indexer.youtube import (
 )
 from podcast_vod_indexer.matching import (
     find_best_window_match,
+    find_best_window_pair_match,
     find_long_episode_transcript_match,
     refine_low_confidence_window_match,
 )
 from podcast_vod_indexer.export import export_matches_html
 
+import argparse
 from dataclasses import dataclass, field
 import time
 
@@ -43,6 +46,8 @@ LONG_EPISODE_SEARCH_SECONDS = 45 * 60
 LONG_EPISODE_WINDOW_SECONDS = 15 * 60
 LONG_EPISODE_STEP_SECONDS = 2 * 60
 LONG_EPISODE_MATCH_METHOD = "transcript_short15m_long45m_window15m"
+DEEP_VOD_EPISODE_STEP_SECONDS = 5 * 60
+DEEP_VOD_STEP_SECONDS = 60
 
 
 @dataclass
@@ -50,6 +55,21 @@ class TranscriptFetchResults:
     episode_ids: set[int] = field(default_factory=set)
     long_episode_ids: set[int] = field(default_factory=set)
     vod_ids: set[int] = field(default_factory=set)
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--deep-vod-match",
+        "--deep-vod-matching",
+        action="store_true",
+        dest="deep_vod_match",
+        help=(
+            "Re-run deeper VOD matching for missing or low-confidence "
+            "episode matches without fetching new data."
+        ),
+    )
+    return parser.parse_args(argv)
 
 
 def process_source(
@@ -344,6 +364,111 @@ def run_matching(
             print("  -> no candidate found")
 
 
+def run_deep_vod_matching(
+    conn,
+    *,
+    vod_min_upload_date: str | None = None,
+) -> dict[str, int]:
+    episodes = get_videos_with_segments_by_kind_and_date(conn, "episode")
+    vods = get_videos_with_segments_by_kind_and_date(
+        conn,
+        "vod",
+        min_upload_date=vod_min_upload_date,
+    )
+    summary = {
+        "checked": 0,
+        "improved": 0,
+        "unchanged": 0,
+        "no_candidate": 0,
+    }
+
+    for episode_id, _, episode_title, episode_upload_date in episodes:
+        existing_confidence = get_match_confidence_for_episode(
+            conn,
+            episode_id,
+        )
+        if (
+            existing_confidence is not None
+            and existing_confidence >= MATCH_CONFIDENCE_CUTOFF
+        ):
+            continue
+
+        candidate_vods = [
+            vod
+            for vod in vods
+            if episode_upload_date is not None
+            and vod[3] is not None
+            and vod[3] <= episode_upload_date
+        ]
+        if not candidate_vods:
+            summary["no_candidate"] += 1
+            continue
+
+        summary["checked"] += 1
+        episode_segments = get_segments_for_video(conn, episode_id)
+        best_vod_id = None
+        best_window_start = None
+        best_score = -1.0
+
+        print(f"[deep-vod-match] Episode: {episode_title}")
+
+        for vod_id, _, vod_title, _ in candidate_vods:
+            match = find_best_window_pair_match(
+                episode_segments,
+                get_segments_for_video(conn, vod_id),
+                window_seconds=900.0,
+                episode_step_seconds=DEEP_VOD_EPISODE_STEP_SECONDS,
+                vod_step_seconds=DEEP_VOD_STEP_SECONDS,
+            )
+            if match is None:
+                continue
+
+            if match["score"] > best_score:
+                best_vod_id = vod_id
+                best_window_start = match["start"]
+                best_score = match["score"]
+                print(
+                    f"  -> best so far: {vod_title} "
+                    f"({best_score * 100:.2f}%)"
+                )
+
+        if best_vod_id is None or best_window_start is None:
+            summary["no_candidate"] += 1
+            print("  -> no candidate found")
+            continue
+
+        if (
+            existing_confidence is not None
+            and best_score <= existing_confidence
+        ):
+            summary["unchanged"] += 1
+            print(
+                f"  -> kept existing candidate "
+                f"({existing_confidence * 100:.2f}%)"
+            )
+            continue
+
+        upsert_match(
+            conn,
+            episode_video_id=episode_id,
+            vod_video_id=best_vod_id,
+            matched_start_seconds=best_window_start,
+            confidence=best_score,
+        )
+        conn.commit()
+        summary["improved"] += 1
+        print(f"  -> stored improved match ({best_score * 100:.2f}%)")
+
+    print(
+        "[deep-vod-match] Summary: "
+        f"{summary['checked']} checked, "
+        f"{summary['improved']} improved, "
+        f"{summary['unchanged']} unchanged, "
+        f"{summary['no_candidate']} without candidates"
+    )
+    return summary
+
+
 def run_long_episode_matching(
     conn,
     *,
@@ -518,7 +643,8 @@ def run_long_episode_matching(
     return newly_accepted_short_episode_ids
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
+    args = parse_args(argv)
     vod_source_url = "https://www.youtube.com/@ThePrimeTimeagen/streams"
     episode_source_url = (
         "https://www.youtube.com/playlist?"
@@ -532,6 +658,21 @@ def main() -> None:
     init_db()
 
     with get_connection() as conn:
+        vod_min_upload_date = get_first_episode_matched_vod_date(
+            conn,
+            MATCH_CONFIDENCE_CUTOFF,
+        )
+
+        if args.deep_vod_match:
+            run_deep_vod_matching(
+                conn,
+                vod_min_upload_date=vod_min_upload_date,
+            )
+            export_matches_html(conn)
+            conn.commit()
+            print("Done")
+            return
+
         removed_non_distinct_matches = (
             remove_non_distinct_long_episode_matches(conn)
         )
@@ -544,10 +685,6 @@ def main() -> None:
             )
             conn.commit()
 
-        vod_min_upload_date = get_first_episode_matched_vod_date(
-            conn,
-            MATCH_CONFIDENCE_CUTOFF,
-        )
         if vod_min_upload_date is not None:
             pruned_vods, pruned_segments = prune_vods_before_date(
                 conn,

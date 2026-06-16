@@ -197,6 +197,50 @@ def find_best_window_match(
     return best_match
 
 
+def find_best_window_pair_match(
+    episode_segments: list[dict],
+    vod_segments: list[dict],
+    window_seconds: float = 900.0,
+    episode_step_seconds: float = 300.0,
+    vod_step_seconds: float = 60.0,
+    char_limit: int = 5000,
+) -> dict | None:
+    episode_windows = build_windows(
+        episode_segments,
+        window_seconds=window_seconds,
+        step_seconds=episode_step_seconds,
+    )
+    vod_windows = build_windows(
+        vod_segments,
+        window_seconds=window_seconds,
+        step_seconds=vod_step_seconds,
+    )
+
+    best_match = None
+    best_score = -1.0
+
+    for episode_window in episode_windows:
+        episode_text = episode_window["text"][:char_limit]
+
+        for vod_window in vod_windows:
+            score = similarity_score(
+                episode_text,
+                vod_window["text"][:char_limit],
+            )
+
+            if score > best_score:
+                best_score = score
+                best_match = {
+                    "episode_start": episode_window["start"],
+                    "episode_end": episode_window["end"],
+                    "start": vod_window["start"],
+                    "end": vod_window["end"],
+                    "score": score,
+                }
+
+    return best_match
+
+
 def refine_low_confidence_window_match(
     episode_segments: list[dict],
     vod_segments: list[dict],

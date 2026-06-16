@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 from podcast_vod_indexer.cli import (
     TranscriptFetchResults,
@@ -7,6 +7,7 @@ from podcast_vod_indexer.cli import (
     fetch_transcripts_for_videos,
     main,
     process_source,
+    run_deep_vod_matching,
     run_long_episode_matching,
     run_matching,
 )
@@ -322,6 +323,143 @@ class LowConfidenceRetryTests(unittest.TestCase):
 
         run_matching(MagicMock(), new_vod_transcript_ids={2})
 
+        upsert_match.assert_not_called()
+
+
+class DeepVodMatchingTests(unittest.TestCase):
+    @patch("podcast_vod_indexer.cli.upsert_match")
+    @patch("podcast_vod_indexer.cli.find_best_window_pair_match")
+    @patch("podcast_vod_indexer.cli.get_segments_for_video")
+    @patch("podcast_vod_indexer.cli.get_match_confidence_for_episode")
+    @patch("podcast_vod_indexer.cli.get_videos_with_segments_by_kind_and_date")
+    def test_searches_only_unaccepted_episodes_against_prior_vods(
+        self,
+        get_videos,
+        get_confidence,
+        get_segments,
+        find_match,
+        upsert_match,
+    ) -> None:
+        get_videos.side_effect = [
+            [
+                (1, "accepted-episode", "Accepted Episode", "20250310"),
+                (2, "low-episode", "Low Episode", "20250310"),
+            ],
+            [
+                (10, "prior-vod", "Prior VOD", "20250309"),
+                (11, "future-vod", "Future VOD", "20250311"),
+            ],
+        ]
+        get_confidence.side_effect = [0.20, 0.10]
+        episode_segments = [
+            {"start": 0.0, "duration": 10.0, "text": "episode"}
+        ]
+        prior_vod_segments = [
+            {"start": 0.0, "duration": 10.0, "text": "vod"}
+        ]
+        get_segments.side_effect = lambda _conn, video_id: {
+            2: episode_segments,
+            10: prior_vod_segments,
+        }[video_id]
+        find_match.return_value = {
+            "episode_start": 300.0,
+            "episode_end": 1200.0,
+            "start": 900.0,
+            "end": 1800.0,
+            "score": 0.30,
+        }
+        conn = MagicMock()
+
+        summary = run_deep_vod_matching(conn)
+
+        self.assertEqual(
+            summary,
+            {
+                "checked": 1,
+                "improved": 1,
+                "unchanged": 0,
+                "no_candidate": 0,
+            },
+        )
+        get_segments.assert_has_calls(
+            [
+                call(conn, 2),
+                call(conn, 10),
+            ]
+        )
+        find_match.assert_called_once_with(
+            episode_segments,
+            prior_vod_segments,
+            window_seconds=900.0,
+            episode_step_seconds=300,
+            vod_step_seconds=60,
+        )
+        upsert_match.assert_called_once_with(
+            conn,
+            episode_video_id=2,
+            vod_video_id=10,
+            matched_start_seconds=900.0,
+            confidence=0.30,
+        )
+
+    @patch("podcast_vod_indexer.cli.upsert_match")
+    @patch("podcast_vod_indexer.cli.find_best_window_pair_match")
+    @patch("podcast_vod_indexer.cli.get_segments_for_video")
+    @patch("podcast_vod_indexer.cli.get_match_confidence_for_episode")
+    @patch("podcast_vod_indexer.cli.get_videos_with_segments_by_kind_and_date")
+    def test_does_not_replace_stronger_existing_candidate(
+        self,
+        get_videos,
+        get_confidence,
+        get_segments,
+        find_match,
+        upsert_match,
+    ) -> None:
+        get_videos.side_effect = [
+            [(1, "low-episode", "Low Episode", "20250310")],
+            [(10, "prior-vod", "Prior VOD", "20250309")],
+        ]
+        get_confidence.return_value = 0.14
+        get_segments.return_value = [
+            {"start": 0.0, "duration": 10.0, "text": "transcript"}
+        ]
+        find_match.return_value = {
+            "episode_start": 0.0,
+            "episode_end": 900.0,
+            "start": 900.0,
+            "end": 1800.0,
+            "score": 0.12,
+        }
+
+        summary = run_deep_vod_matching(MagicMock())
+
+        self.assertEqual(summary["unchanged"], 1)
+        upsert_match.assert_not_called()
+
+    @patch("podcast_vod_indexer.cli.upsert_match")
+    @patch("podcast_vod_indexer.cli.find_best_window_pair_match")
+    @patch("podcast_vod_indexer.cli.get_segments_for_video")
+    @patch("podcast_vod_indexer.cli.get_match_confidence_for_episode")
+    @patch("podcast_vod_indexer.cli.get_videos_with_segments_by_kind_and_date")
+    def test_counts_unmatched_episode_without_prior_vod_candidate(
+        self,
+        get_videos,
+        get_confidence,
+        get_segments,
+        find_match,
+        upsert_match,
+    ) -> None:
+        get_videos.side_effect = [
+            [(1, "episode", "Episode", "20250310")],
+            [(10, "future-vod", "Future VOD", "20250311")],
+        ]
+        get_confidence.return_value = None
+
+        summary = run_deep_vod_matching(MagicMock())
+
+        self.assertEqual(summary["no_candidate"], 1)
+        get_segments.assert_not_called()
+        find_match.assert_not_called()
         upsert_match.assert_not_called()
 
 
@@ -650,6 +788,50 @@ class NewlyAcceptedLongMatchTests(unittest.TestCase):
 
 class MainTriggerFlowTests(unittest.TestCase):
     @patch("podcast_vod_indexer.cli.export_matches_html")
+    @patch("podcast_vod_indexer.cli.run_deep_vod_matching")
+    @patch("podcast_vod_indexer.cli.run_matching")
+    @patch("podcast_vod_indexer.cli.run_long_episode_matching")
+    @patch("podcast_vod_indexer.cli.fetch_missing_transcripts_with_budget")
+    @patch("podcast_vod_indexer.cli.process_source")
+    @patch("podcast_vod_indexer.cli.remove_non_distinct_long_episode_matches")
+    @patch("podcast_vod_indexer.cli.prune_vods_before_date")
+    @patch("podcast_vod_indexer.cli.get_first_episode_matched_vod_date")
+    @patch("podcast_vod_indexer.cli.get_connection")
+    @patch("podcast_vod_indexer.cli.init_db")
+    def test_deep_vod_mode_does_not_fetch_or_run_normal_matching(
+        self,
+        init_db,
+        get_connection,
+        get_vod_cutoff,
+        prune_vods,
+        remove_non_distinct_matches,
+        process_source,
+        fetch_transcripts,
+        run_long_matching,
+        run_vod_matching,
+        run_deep_matching,
+        export_html,
+    ) -> None:
+        conn = MagicMock()
+        get_connection.return_value.__enter__.return_value = conn
+        get_vod_cutoff.return_value = "20250305"
+
+        main(["--deep-vod-matching"])
+
+        init_db.assert_called_once()
+        run_deep_matching.assert_called_once_with(
+            conn,
+            vod_min_upload_date="20250305",
+        )
+        export_html.assert_called_once_with(conn)
+        process_source.assert_not_called()
+        fetch_transcripts.assert_not_called()
+        run_long_matching.assert_not_called()
+        run_vod_matching.assert_not_called()
+        remove_non_distinct_matches.assert_not_called()
+        prune_vods.assert_not_called()
+
+    @patch("podcast_vod_indexer.cli.export_matches_html")
     @patch("podcast_vod_indexer.cli.run_matching")
     @patch("podcast_vod_indexer.cli.run_long_episode_matching")
     @patch("podcast_vod_indexer.cli.fetch_missing_transcripts_with_budget")
@@ -691,7 +873,7 @@ class MainTriggerFlowTests(unittest.TestCase):
         order.attach_mock(run_long_matching, "run_long_matching")
         order.attach_mock(run_vod_matching, "run_vod_matching")
 
-        main()
+        main([])
 
         self.assertEqual(
             [call[0] for call in order.mock_calls],
