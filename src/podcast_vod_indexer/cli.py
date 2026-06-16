@@ -10,9 +10,10 @@ from podcast_vod_indexer.db import (
     get_segments_for_video,
     get_match_confidence_for_episode,
     get_episode_long_match_for_episode,
+    get_excluded_long_episode_ids,
     get_first_episode_matched_vod_date,
+    get_excluded_long_episode_match_ids,
     get_matched_long_episode_ids,
-    get_video_durations_by_kind,
     prune_vods_before_date,
     remove_non_distinct_long_episode_matches,
     upsert_match,
@@ -49,18 +50,6 @@ class TranscriptFetchResults:
     episode_ids: set[int] = field(default_factory=set)
     long_episode_ids: set[int] = field(default_factory=set)
     vod_ids: set[int] = field(default_factory=set)
-
-
-def is_distinct_long_episode(
-    episode_duration: int | None,
-    long_episode_duration: int | None,
-) -> bool:
-    return (
-        episode_duration is None
-        or long_episode_duration is None
-        or long_episode_duration
-        > episode_duration + LONG_EPISODE_DURATION_TOLERANCE_SECONDS
-    )
 
 
 def process_source(
@@ -366,19 +355,26 @@ def run_long_episode_matching(
 
     short_episodes = get_videos_with_segments_by_kind(conn, "episode")
     long_episodes = get_videos_with_segments_by_kind(conn, "episode_long")
-    short_episode_durations = get_video_durations_by_kind(conn, "episode")
-    long_episode_durations = get_video_durations_by_kind(conn, "episode_long")
 
     if not long_episodes:
         print("[long-episode-match] No long episodes with transcripts found")
         return set()
 
     matched_long_episode_ids = get_matched_long_episode_ids(conn)
+    excluded_short_episode_ids = get_excluded_long_episode_match_ids(conn)
+    excluded_long_episode_ids = get_excluded_long_episode_ids(conn)
     candidates = []
     existing_matches = {}
     attempted_short_episode_ids = set()
 
     for episode_id, _, episode_title in short_episodes:
+        if episode_id in excluded_short_episode_ids:
+            print(
+                f"[long-episode-match] Skipping equivalent upload: "
+                f"{episode_title}"
+            )
+            continue
+
         existing_match = get_episode_long_match_for_episode(conn, episode_id)
         existing_matches[episode_id] = existing_match
 
@@ -407,10 +403,7 @@ def run_long_episode_matching(
                 long_episode
                 for long_episode in long_episodes
                 if long_episode[0] not in matched_long_episode_ids
-                and is_distinct_long_episode(
-                    short_episode_durations.get(episode_id),
-                    long_episode_durations.get(long_episode[0]),
-                )
+                and long_episode[0] not in excluded_long_episode_ids
             ]
         else:
             candidate_long_episodes = [
@@ -418,10 +411,7 @@ def run_long_episode_matching(
                 for long_episode in long_episodes
                 if long_episode[0] in new_long_episode_transcript_ids
                 and long_episode[0] not in matched_long_episode_ids
-                and is_distinct_long_episode(
-                    short_episode_durations.get(episode_id),
-                    long_episode_durations.get(long_episode[0]),
-                )
+                and long_episode[0] not in excluded_long_episode_ids
             ]
 
         if not candidate_long_episodes:
@@ -593,6 +583,20 @@ def main() -> None:
             new_episode_transcript_ids=transcript_fetches.episode_ids,
             new_long_episode_transcript_ids=transcript_fetches.long_episode_ids,
         )
+        removed_non_distinct_matches = (
+            remove_non_distinct_long_episode_matches(conn)
+        )
+        if removed_non_distinct_matches:
+            print(
+                "[long-episode-match] Marked "
+                f"{removed_non_distinct_matches} equivalent upload(s) "
+                "as not needed"
+            )
+            conn.commit()
+            newly_long_matched_episode_ids -= (
+                get_excluded_long_episode_match_ids(conn)
+            )
+
         run_matching(
             conn,
             new_vod_transcript_ids=transcript_fetches.vod_ids,

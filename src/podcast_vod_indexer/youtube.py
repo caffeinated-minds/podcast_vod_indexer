@@ -9,7 +9,6 @@ from html import unescape
 import json
 import subprocess
 import xml.etree.ElementTree as ET
-import yt_dlp
 
 
 class TranscriptRateLimitError(Exception):
@@ -161,25 +160,44 @@ def get_transcript_segments(video_url: str) -> list[dict[str, object]]:
     return parse_json3_captions(data)
 
 
+def _get_entry_webpage_url(entry: dict[str, Any]) -> str:
+    webpage_url = entry.get("webpage_url") or entry.get("url")
+    if isinstance(webpage_url, str) and webpage_url.startswith(("http://", "https://")):
+        return webpage_url
+
+    return f"https://www.youtube.com/watch?v={entry['id']}"
+
+
 def get_latest_videos(source_url: str, limit: int | None = None) -> list[dict]:
-    ydl_opts = {
-        "quiet": True,
-        "extract_flat": True,
-    }
-
+    command = [
+        YTDLP_BIN,
+        "--cookies-from-browser",
+        "brave+gnomekeyring",
+        "--dump-single-json",
+        "--flat-playlist",
+        "--skip-download",
+    ]
     if limit is not None:
-        ydl_opts["playlistend"] = limit
+        command.extend(["--playlist-end", str(limit)])
+    command.append(source_url)
 
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(source_url, download=False)
+    result = subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+    )
 
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip())
+
+    info = json.loads(result.stdout)
     entries = info.get("entries", []) or []
 
     return [
         {
             "youtube_id": e.get("id"),
             "title": e.get("title"),
-            "webpage_url": e.get("url"),
+            "webpage_url": _get_entry_webpage_url(e),
         }
         for e in entries
         if e.get("id")

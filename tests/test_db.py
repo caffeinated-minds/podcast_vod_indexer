@@ -3,6 +3,8 @@ import unittest
 from unittest.mock import patch
 
 from podcast_vod_indexer.db import (
+    get_excluded_long_episode_ids,
+    get_excluded_long_episode_match_ids,
     get_first_episode_matched_vod_date,
     get_video_durations_by_kind,
     get_videos_with_segments_by_kind,
@@ -225,6 +227,14 @@ class DatabaseSchemaTests(unittest.TestCase):
                 (6, "equivalent_duration"),
                 (8, "equivalent_duration"),
             ],
+        )
+        self.assertEqual(
+            get_excluded_long_episode_match_ids(conn),
+            {1, 6, 8},
+        )
+        self.assertEqual(
+            get_excluded_long_episode_ids(conn),
+            {2, 5, 7},
         )
         conn.close()
 

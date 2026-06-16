@@ -325,6 +325,29 @@ def get_matched_long_episode_ids(conn) -> set[int]:
     return {row[0] for row in rows}
 
 
+def get_excluded_long_episode_match_ids(conn) -> set[int]:
+    rows = conn.execute(
+        """
+        SELECT short_episode_video_id
+        FROM episode_long_exclusions
+        """
+    ).fetchall()
+
+    return {row[0] for row in rows}
+
+
+def get_excluded_long_episode_ids(conn) -> set[int]:
+    rows = conn.execute(
+        """
+        SELECT long_episode_video_id
+        FROM episode_long_exclusions
+        WHERE long_episode_video_id IS NOT NULL
+        """
+    ).fetchall()
+
+    return {row[0] for row in rows}
+
+
 def get_video_durations_by_kind(conn, kind: str) -> dict[int, int]:
     rows = conn.execute(
         """

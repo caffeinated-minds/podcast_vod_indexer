@@ -383,13 +383,45 @@ class NewlyAcceptedLongMatchTests(unittest.TestCase):
     @patch("podcast_vod_indexer.cli.get_episode_long_match_for_episode")
     @patch("podcast_vod_indexer.cli.find_long_episode_transcript_match")
     @patch("podcast_vod_indexer.cli.get_segments_for_video")
+    @patch("podcast_vod_indexer.cli.get_excluded_long_episode_match_ids")
+    @patch("podcast_vod_indexer.cli.get_excluded_long_episode_ids")
     @patch("podcast_vod_indexer.cli.get_matched_long_episode_ids")
-    @patch("podcast_vod_indexer.cli.get_video_durations_by_kind")
     @patch("podcast_vod_indexer.cli.get_videos_with_segments_by_kind")
-    def test_does_not_compare_episodes_with_non_distinct_duration(
+    def test_does_not_match_excluded_equivalent_upload_episode(
         self,
         get_videos,
-        get_durations,
+        get_matched_long_ids,
+        get_excluded_long_ids,
+        get_excluded_ids,
+        get_segments,
+        find_match,
+        get_existing_match,
+        upsert_match,
+    ) -> None:
+        get_videos.side_effect = [
+            [(1, "episode-id", "Episode")],
+            [(2, "long-id", "Long Episode")],
+        ]
+        get_matched_long_ids.return_value = set()
+        get_excluded_long_ids.return_value = set()
+        get_excluded_ids.return_value = {1}
+
+        run_long_episode_matching(MagicMock())
+
+        get_existing_match.assert_not_called()
+        get_segments.assert_not_called()
+        find_match.assert_not_called()
+        upsert_match.assert_not_called()
+
+    @patch("podcast_vod_indexer.cli.upsert_episode_long_match")
+    @patch("podcast_vod_indexer.cli.get_episode_long_match_for_episode")
+    @patch("podcast_vod_indexer.cli.find_long_episode_transcript_match")
+    @patch("podcast_vod_indexer.cli.get_segments_for_video")
+    @patch("podcast_vod_indexer.cli.get_matched_long_episode_ids")
+    @patch("podcast_vod_indexer.cli.get_videos_with_segments_by_kind")
+    def test_matches_non_distinct_duration_before_classification(
+        self,
+        get_videos,
         get_matched_long_ids,
         get_segments,
         find_match,
@@ -398,21 +430,19 @@ class NewlyAcceptedLongMatchTests(unittest.TestCase):
     ) -> None:
         get_videos.side_effect = [
             [(1, "episode-id", "Episode")],
-            [
-                (2, "identical-long-id", "Identical Long"),
-                (3, "shorter-long-id", "Shorter Long"),
-                (4, "near-duplicate-long-id", "Near Duplicate Long"),
-            ],
+            [(2, "identical-long-id", "Identical Long")],
         ]
-        get_durations.side_effect = [{1: 1200}, {2: 1200, 3: 900, 4: 1205}]
         get_matched_long_ids.return_value = set()
         get_existing_match.return_value = None
+        get_segments.return_value = [
+            {"start": 0.0, "duration": 1.0, "text": "transcript"}
+        ]
+        find_match.return_value = {"start": 0.0, "end": 900.0, "score": 0.20}
 
         run_long_episode_matching(MagicMock())
 
-        get_segments.assert_not_called()
-        find_match.assert_not_called()
-        upsert_match.assert_not_called()
+        find_match.assert_called_once()
+        upsert_match.assert_called_once()
 
     @patch("podcast_vod_indexer.cli.upsert_episode_long_match")
     @patch("podcast_vod_indexer.cli.get_episode_long_match_for_episode")
@@ -624,6 +654,8 @@ class MainTriggerFlowTests(unittest.TestCase):
     @patch("podcast_vod_indexer.cli.run_long_episode_matching")
     @patch("podcast_vod_indexer.cli.fetch_missing_transcripts_with_budget")
     @patch("podcast_vod_indexer.cli.process_source")
+    @patch("podcast_vod_indexer.cli.get_excluded_long_episode_match_ids")
+    @patch("podcast_vod_indexer.cli.remove_non_distinct_long_episode_matches")
     @patch("podcast_vod_indexer.cli.prune_vods_before_date")
     @patch("podcast_vod_indexer.cli.get_first_episode_matched_vod_date")
     @patch("podcast_vod_indexer.cli.get_connection")
@@ -634,6 +666,8 @@ class MainTriggerFlowTests(unittest.TestCase):
         get_connection,
         get_vod_cutoff,
         prune_vods,
+        remove_non_distinct_matches,
+        get_excluded_ids,
         process_source,
         fetch_transcripts,
         run_long_matching,
@@ -644,6 +678,8 @@ class MainTriggerFlowTests(unittest.TestCase):
         get_connection.return_value.__enter__.return_value = conn
         get_vod_cutoff.return_value = "20250305"
         prune_vods.return_value = (0, 0)
+        remove_non_distinct_matches.side_effect = [0, 1]
+        get_excluded_ids.return_value = {1}
         fetch_transcripts.return_value = TranscriptFetchResults(
             episode_ids={1},
             long_episode_ids={2},
@@ -664,7 +700,7 @@ class MainTriggerFlowTests(unittest.TestCase):
         run_vod_matching.assert_called_once_with(
             conn,
             new_vod_transcript_ids={10},
-            newly_long_matched_episode_ids={1},
+            newly_long_matched_episode_ids=set(),
             vod_min_upload_date="20250305",
         )
         run_long_matching.assert_called_once_with(
