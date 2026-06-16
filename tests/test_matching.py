@@ -81,6 +81,7 @@ class DeepWindowPairMatchTests(unittest.TestCase):
             window_seconds=60.0,
             episode_step_seconds=60.0,
             vod_step_seconds=60.0,
+            min_window_chars=0,
         )
 
         self.assertIsNotNone(match)
@@ -106,6 +107,7 @@ class DeepWindowPairMatchTests(unittest.TestCase):
             window_seconds=60.0,
             episode_step_seconds=60.0,
             vod_step_seconds=60.0,
+            min_window_chars=0,
         )
 
         self.assertIsNone(match)
@@ -130,11 +132,43 @@ class DeepWindowPairMatchTests(unittest.TestCase):
             window_seconds=60.0,
             episode_step_seconds=60.0,
             vod_step_seconds=60.0,
+            min_window_chars=0,
         )
 
         self.assertIsNotNone(match)
         self.assertEqual(match["score"], 0.42)
         similarity_score.assert_called_once()
+
+    @patch("podcast_vod_indexer.matching.similarity_score")
+    def test_skips_undersized_deep_windows(
+        self,
+        similarity_score,
+    ) -> None:
+        episode_segments = [
+            segment(
+                0.0,
+                60.0,
+                "Thank you very much for watching. See you next week.",
+            ),
+        ]
+        vod_segments = [
+            segment(
+                0.0,
+                60.0,
+                "Thanks everybody. We'll see you later. Bye.",
+            ),
+        ]
+
+        match = find_best_window_pair_match(
+            episode_segments,
+            vod_segments,
+            window_seconds=900.0,
+            episode_step_seconds=300.0,
+            vod_step_seconds=60.0,
+        )
+
+        self.assertIsNone(match)
+        similarity_score.assert_not_called()
 
 
 if __name__ == "__main__":

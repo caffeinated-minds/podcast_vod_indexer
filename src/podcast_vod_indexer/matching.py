@@ -64,6 +64,7 @@ TRANSCRIPT_STOP_WORDS = {
 
 TOKEN_RE = re.compile(r"[a-z0-9][a-z0-9']+")
 DEFAULT_MIN_TOKEN_OVERLAP = 0.03
+DEFAULT_MIN_WINDOW_CHARS = 1000
 
 
 def join_segment_text(segments: list[dict]) -> str:
@@ -293,6 +294,7 @@ def find_best_window_pair_match(
     vod_step_seconds: float = 60.0,
     char_limit: int = 5000,
     min_token_overlap: float = DEFAULT_MIN_TOKEN_OVERLAP,
+    min_window_chars: int = DEFAULT_MIN_WINDOW_CHARS,
 ) -> dict | None:
     episode_windows = build_windows(
         episode_segments,
@@ -315,6 +317,7 @@ def find_best_window_pair_match(
             meaningful_tokens(episode_window["text"][:char_limit]),
         )
         for episode_window in episode_windows
+        if len(episode_window["text"][:char_limit]) >= min_window_chars
     ]
     vod_window_data = [
         (
@@ -323,6 +326,7 @@ def find_best_window_pair_match(
             meaningful_tokens(vod_window["text"][:char_limit]),
         )
         for vod_window in vod_windows
+        if len(vod_window["text"][:char_limit]) >= min_window_chars
     ]
 
     for episode_window, episode_text, episode_tokens in episode_window_data:
