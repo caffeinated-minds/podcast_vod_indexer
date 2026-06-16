@@ -431,6 +431,9 @@ def run_deep_vod_matching(
                     f"  -> best so far: {vod_title} "
                     f"({best_score * 100:.2f}%)"
                 )
+                if best_score >= MATCH_CONFIDENCE_CUTOFF:
+                    print("  -> accepted match found, moving on")
+                    break
 
         if best_vod_id is None or best_window_start is None:
             summary["no_candidate"] += 1

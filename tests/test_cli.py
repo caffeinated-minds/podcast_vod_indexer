@@ -441,6 +441,65 @@ class DeepVodMatchingTests(unittest.TestCase):
     @patch("podcast_vod_indexer.cli.get_segments_for_video")
     @patch("podcast_vod_indexer.cli.get_match_confidence_for_episode")
     @patch("podcast_vod_indexer.cli.get_videos_with_segments_by_kind_and_date")
+    def test_stops_episode_search_after_first_accepted_match(
+        self,
+        get_videos,
+        get_confidence,
+        get_segments,
+        find_match,
+        upsert_match,
+    ) -> None:
+        get_videos.side_effect = [
+            [(1, "episode", "Episode", "20250310")],
+            [
+                (10, "first-prior-vod", "First Prior VOD", "20250309"),
+                (11, "second-prior-vod", "Second Prior VOD", "20250308"),
+            ],
+        ]
+        get_confidence.return_value = None
+        episode_segments = [
+            {"start": 0.0, "duration": 10.0, "text": "episode"}
+        ]
+        first_vod_segments = [
+            {"start": 0.0, "duration": 10.0, "text": "vod"}
+        ]
+        get_segments.side_effect = lambda _conn, video_id: {
+            1: episode_segments,
+            10: first_vod_segments,
+        }[video_id]
+        find_match.return_value = {
+            "episode_start": 0.0,
+            "episode_end": 900.0,
+            "start": 900.0,
+            "end": 1800.0,
+            "score": 0.16,
+        }
+        conn = MagicMock()
+
+        summary = run_deep_vod_matching(conn)
+
+        self.assertEqual(summary["improved"], 1)
+        get_segments.assert_has_calls(
+            [
+                call(conn, 1),
+                call(conn, 10),
+            ]
+        )
+        self.assertEqual(get_segments.call_count, 2)
+        find_match.assert_called_once()
+        upsert_match.assert_called_once_with(
+            conn,
+            episode_video_id=1,
+            vod_video_id=10,
+            matched_start_seconds=900.0,
+            confidence=0.16,
+        )
+
+    @patch("podcast_vod_indexer.cli.upsert_match")
+    @patch("podcast_vod_indexer.cli.find_best_window_pair_match")
+    @patch("podcast_vod_indexer.cli.get_segments_for_video")
+    @patch("podcast_vod_indexer.cli.get_match_confidence_for_episode")
+    @patch("podcast_vod_indexer.cli.get_videos_with_segments_by_kind_and_date")
     def test_counts_unmatched_episode_without_prior_vod_candidate(
         self,
         get_videos,
