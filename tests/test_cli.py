@@ -826,7 +826,7 @@ class TranscriptFetchTriggerTests(unittest.TestCase):
 
         results = fetch_missing_transcripts_with_budget(
             MagicMock(),
-            vod_limit=10,
+            vod_limit=2,
             episode_limit=2,
             long_episode_limit=2,
         )
@@ -1212,7 +1212,7 @@ class MainTriggerFlowTests(unittest.TestCase):
         )
         fetch_transcripts.assert_called_once_with(
             conn,
-            vod_limit=10,
+            vod_limit=2,
             episode_limit=2,
             long_episode_limit=2,
             vod_min_upload_date="20250305",

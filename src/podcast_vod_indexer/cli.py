@@ -819,7 +819,7 @@ def main(argv: list[str] | None = None) -> None:
 
         transcript_fetches = fetch_missing_transcripts_with_budget(
             conn,
-            vod_limit=10,
+            vod_limit=2,
             episode_limit=2,
             long_episode_limit=2,
             vod_min_upload_date=vod_min_upload_date,
