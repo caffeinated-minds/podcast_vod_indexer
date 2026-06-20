@@ -81,6 +81,23 @@ def init_db() -> None:
             """
         )
 
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS clip_matches (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                clip_video_id INTEGER UNIQUE,
+                episode_video_id INTEGER,
+                matched_against_video_id INTEGER,
+                matched_start_seconds REAL,
+                confidence REAL,
+                match_method TEXT,
+                FOREIGN KEY(clip_video_id) REFERENCES videos(id),
+                FOREIGN KEY(episode_video_id) REFERENCES videos(id),
+                FOREIGN KEY(matched_against_video_id) REFERENCES videos(id)
+            )
+            """
+        )
+
         columns = {
             row[1]
             for row in conn.execute(
@@ -221,6 +238,21 @@ def get_episode_long_match_for_episode(
     ).fetchone()
 
     return (row[0], row[1]) if row else None
+
+
+def get_clip_match_confidence_for_clip(
+    conn, clip_video_id: int
+) -> float | None:
+    row = conn.execute(
+        """
+        SELECT confidence
+        FROM clip_matches
+        WHERE clip_video_id = ?
+        """,
+        (clip_video_id,),
+    ).fetchone()
+
+    return row[0] if row else None
 
 
 def get_first_episode_matched_vod_date(
@@ -456,6 +488,78 @@ def get_videos_with_segments_by_kind(
     return rows
 
 
+def get_videos_with_segments_by_kinds(
+    conn,
+    kinds: list[str],
+) -> list[tuple[int, str, str, str | None]]:
+    if not kinds:
+        return []
+
+    placeholders = ", ".join("?" for _ in kinds)
+    rows = conn.execute(
+        f"""
+        SELECT v.id, v.youtube_id, v.title, v.upload_date
+        FROM videos v
+        WHERE v.kind IN ({placeholders})
+          AND EXISTS (
+              SELECT 1
+              FROM segments s
+              WHERE s.video_id = v.id
+          )
+        ORDER BY v.upload_date DESC
+        """,
+        kinds,
+    ).fetchall()
+
+    return rows
+
+
+def get_clip_episode_match_targets(
+    conn,
+    min_confidence: float,
+) -> list[tuple[int, str, str, str | None, int]]:
+    rows = conn.execute(
+        """
+        SELECT
+            episode.id,
+            episode.youtube_id,
+            episode.title,
+            episode.upload_date,
+            COALESCE(
+                long_match.long_episode_video_id,
+                long_exclusion.long_episode_video_id,
+                episode.id
+            ) AS matched_against_video_id
+        FROM videos episode
+        LEFT JOIN episode_long_matches long_match
+            ON long_match.short_episode_video_id = episode.id
+            AND long_match.confidence >= ?
+        LEFT JOIN episode_long_exclusions long_exclusion
+            ON long_exclusion.short_episode_video_id = episode.id
+            AND long_exclusion.long_episode_video_id IS NOT NULL
+        WHERE episode.kind = 'episode'
+          AND EXISTS (
+              SELECT 1
+              FROM segments episode_segment
+              WHERE episode_segment.video_id = episode.id
+          )
+          AND EXISTS (
+              SELECT 1
+              FROM segments target_segment
+              WHERE target_segment.video_id = COALESCE(
+                  long_match.long_episode_video_id,
+                  long_exclusion.long_episode_video_id,
+                  episode.id
+              )
+          )
+        ORDER BY episode.upload_date DESC
+        """,
+        (min_confidence,),
+    ).fetchall()
+
+    return rows
+
+
 def get_videos_with_segments_by_kind_and_date(
     conn, kind: str, min_upload_date: str | None = None
 ) -> list[tuple[int, str, str, str | None]]:
@@ -541,6 +645,45 @@ def upsert_episode_long_match(
         (
             short_episode_video_id,
             long_episode_video_id,
+            confidence,
+            match_method,
+        ),
+    )
+
+
+def upsert_clip_match(
+    conn,
+    clip_video_id: int,
+    episode_video_id: int,
+    matched_against_video_id: int,
+    matched_start_seconds: float,
+    confidence: float,
+    match_method: str,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO clip_matches (
+            clip_video_id,
+            episode_video_id,
+            matched_against_video_id,
+            matched_start_seconds,
+            confidence,
+            match_method
+        )
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(clip_video_id)
+        DO UPDATE SET
+            episode_video_id = excluded.episode_video_id,
+            matched_against_video_id = excluded.matched_against_video_id,
+            matched_start_seconds = excluded.matched_start_seconds,
+            confidence = excluded.confidence,
+            match_method = excluded.match_method
+        """,
+        (
+            clip_video_id,
+            episode_video_id,
+            matched_against_video_id,
+            matched_start_seconds,
             confidence,
             match_method,
         ),

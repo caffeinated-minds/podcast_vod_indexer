@@ -166,6 +166,70 @@ def get_segments_before(
     ]
 
 
+def transcript_duration_seconds(segments: list[dict]) -> float:
+    if not segments:
+        return 0.0
+
+    min_start = min(segment["start"] for segment in segments)
+    max_end = max(
+        segment["start"] + segment["duration"] for segment in segments
+    )
+    return max_end - min_start
+
+
+def find_clip_transcript_match(
+    clip_segments: list[dict],
+    target_segments: list[dict],
+    min_window_seconds: float = 60.0,
+    max_window_seconds: float = 600.0,
+    window_padding_seconds: float = 30.0,
+    step_seconds: float = 15.0,
+    char_limit: int = 5000,
+    min_token_overlap: float = DEFAULT_MIN_TOKEN_OVERLAP,
+) -> dict | None:
+    clip_text = join_segment_text(clip_segments)[:char_limit]
+    if not clip_text:
+        return None
+
+    clip_tokens = meaningful_tokens(clip_text)
+    window_seconds = min(
+        max_window_seconds,
+        max(
+            min_window_seconds,
+            transcript_duration_seconds(clip_segments)
+            + window_padding_seconds,
+        ),
+    )
+
+    best_match = None
+    best_score = -1.0
+
+    for window in build_windows(
+        target_segments,
+        window_seconds=window_seconds,
+        step_seconds=step_seconds,
+    ):
+        target_text = window["text"][:char_limit]
+        if not has_plausible_token_overlap(
+            clip_tokens,
+            meaningful_tokens(target_text),
+            min_token_overlap,
+        ):
+            continue
+
+        score = similarity_score(clip_text, target_text)
+
+        if score > best_score:
+            best_score = score
+            best_match = {
+                "start": window["start"],
+                "end": window["end"],
+                "score": score,
+            }
+
+    return best_match
+
+
 def find_long_episode_transcript_match(
     episode_segments: list[dict],
     long_episode_segments: list[dict],

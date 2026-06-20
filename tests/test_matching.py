@@ -2,6 +2,7 @@ import unittest
 from unittest.mock import patch
 
 from podcast_vod_indexer.matching import (
+    find_clip_transcript_match,
     find_best_window_pair_match,
     refine_low_confidence_window_match,
 )
@@ -169,6 +170,30 @@ class DeepWindowPairMatchTests(unittest.TestCase):
 
         self.assertIsNone(match)
         similarity_score.assert_not_called()
+
+
+class ClipTranscriptMatchTests(unittest.TestCase):
+    def test_finds_clip_inside_episode_transcript(self) -> None:
+        clip_segments = [
+            segment(0.0, 30.0, "shared clip moment"),
+        ]
+        target_segments = [
+            segment(0.0, 30.0, "unrelated opening"),
+            segment(60.0, 30.0, "shared clip moment"),
+            segment(120.0, 30.0, "unrelated closing"),
+        ]
+
+        match = find_clip_transcript_match(
+            clip_segments,
+            target_segments,
+            min_window_seconds=30.0,
+            window_padding_seconds=0.0,
+            step_seconds=30.0,
+        )
+
+        self.assertIsNotNone(match)
+        self.assertEqual(match["start"], 60.0)
+        self.assertEqual(match["score"], 1.0)
 
 
 if __name__ == "__main__":
