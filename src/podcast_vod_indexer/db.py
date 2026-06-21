@@ -491,14 +491,14 @@ def get_videos_with_segments_by_kind(
 def get_videos_with_segments_by_kinds(
     conn,
     kinds: list[str],
-) -> list[tuple[int, str, str, str | None]]:
+) -> list[tuple[int, str, str, str, str | None]]:
     if not kinds:
         return []
 
     placeholders = ", ".join("?" for _ in kinds)
     rows = conn.execute(
         f"""
-        SELECT v.id, v.youtube_id, v.title, v.upload_date
+        SELECT v.id, v.youtube_id, v.kind, v.title, v.upload_date
         FROM videos v
         WHERE v.kind IN ({placeholders})
           AND EXISTS (
@@ -520,23 +520,33 @@ def get_clip_episode_match_targets(
 ) -> list[tuple[int, str, str, str | None, int]]:
     rows = conn.execute(
         """
+        WITH long_targets AS (
+            SELECT
+                short_episode_video_id,
+                long_episode_video_id
+            FROM episode_long_matches
+            WHERE confidence >= ?
+
+            UNION
+
+            SELECT
+                short_episode_video_id,
+                long_episode_video_id
+            FROM episode_long_exclusions
+            WHERE long_episode_video_id IS NOT NULL
+        )
         SELECT
             episode.id,
             episode.youtube_id,
             episode.title,
             episode.upload_date,
-            COALESCE(
-                long_match.long_episode_video_id,
-                long_exclusion.long_episode_video_id,
-                episode.id
-            ) AS matched_against_video_id
+            long_episode.id AS matched_against_video_id
         FROM videos episode
-        LEFT JOIN episode_long_matches long_match
-            ON long_match.short_episode_video_id = episode.id
-            AND long_match.confidence >= ?
-        LEFT JOIN episode_long_exclusions long_exclusion
-            ON long_exclusion.short_episode_video_id = episode.id
-            AND long_exclusion.long_episode_video_id IS NOT NULL
+        JOIN long_targets target
+            ON target.short_episode_video_id = episode.id
+        JOIN videos long_episode
+            ON long_episode.id = target.long_episode_video_id
+            AND long_episode.kind = 'episode_long'
         WHERE episode.kind = 'episode'
           AND EXISTS (
               SELECT 1
@@ -546,11 +556,7 @@ def get_clip_episode_match_targets(
           AND EXISTS (
               SELECT 1
               FROM segments target_segment
-              WHERE target_segment.video_id = COALESCE(
-                  long_match.long_episode_video_id,
-                  long_exclusion.long_episode_video_id,
-                  episode.id
-              )
+              WHERE target_segment.video_id = long_episode.id
           )
         ORDER BY episode.upload_date DESC
         """,

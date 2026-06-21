@@ -97,6 +97,82 @@ class DatabaseSchemaTests(unittest.TestCase):
         )
         conn.close()
 
+    def test_clip_targets_do_not_fallback_to_normal_episode(self) -> None:
+        conn = sqlite3.connect(":memory:")
+
+        with patch(
+            "podcast_vod_indexer.db.get_connection",
+            return_value=conn,
+        ):
+            init_db()
+
+        conn.execute(
+            """
+            INSERT INTO videos (id, youtube_id, kind, title, upload_date)
+            VALUES (1, 'episode', 'episode', 'Episode', '20250310')
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO segments (video_id, start, duration, text)
+            VALUES (1, 0, 1, 'transcript')
+            """
+        )
+
+        self.assertEqual(get_clip_episode_match_targets(conn, 0.15), [])
+        conn.close()
+
+    def test_clip_targets_use_equivalent_long_episode_exclusions(self) -> None:
+        conn = sqlite3.connect(":memory:")
+
+        with patch(
+            "podcast_vod_indexer.db.get_connection",
+            return_value=conn,
+        ):
+            init_db()
+
+        conn.executemany(
+            """
+            INSERT INTO videos (id, youtube_id, kind, title, upload_date)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            [
+                (1, "episode", "episode", "Episode", "20250310"),
+                (
+                    2,
+                    "long-episode",
+                    "episode_long",
+                    "Long Episode",
+                    "20250310",
+                ),
+            ],
+        )
+        conn.executemany(
+            """
+            INSERT INTO segments (video_id, start, duration, text)
+            VALUES (?, 0, 1, 'transcript')
+            """,
+            [(1,), (2,)],
+        )
+        conn.execute(
+            """
+            INSERT INTO episode_long_exclusions (
+                short_episode_video_id,
+                long_episode_video_id,
+                reason
+            )
+            VALUES (1, 2, 'equivalent_duration')
+            """
+        )
+
+        targets = get_clip_episode_match_targets(conn, 0.15)
+
+        self.assertEqual(
+            targets,
+            [(1, "episode", "Episode", "20250310", 2)],
+        )
+        conn.close()
+
     def test_upserts_clip_match_by_clip(self) -> None:
         conn = sqlite3.connect(":memory:")
 

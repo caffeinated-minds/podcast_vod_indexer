@@ -800,7 +800,9 @@ class ClipMatchingTests(unittest.TestCase):
         find_match,
         upsert_match,
     ) -> None:
-        get_clips.return_value = [(10, "clip-id", "Clip", "20250312")]
+        get_clips.return_value = [
+            (10, "clip-id", "clip", "Clip", "20250312")
+        ]
         get_confidence.return_value = None
         get_targets.return_value = [
             (1, "episode-id", "Episode", "20250310", 2),
@@ -854,7 +856,9 @@ class ClipMatchingTests(unittest.TestCase):
         find_match,
         upsert_match,
     ) -> None:
-        get_clips.return_value = [(10, "clip-id", "Clip", "20250312")]
+        get_clips.return_value = [
+            (10, "clip-id", "clip", "Clip", "20250312")
+        ]
         get_confidence.return_value = 0.20
 
         run_clip_matching(MagicMock())
@@ -880,8 +884,8 @@ class ClipMatchingTests(unittest.TestCase):
         upsert_match,
     ) -> None:
         get_clips.return_value = [
-            (10, "clip-one", "Clip One", "20250312"),
-            (11, "clip-two", "Clip Two", "20250312"),
+            (10, "clip-one", "clip", "Clip One", "20250312"),
+            (11, "clip-two", "clip", "Clip Two", "20250312"),
         ]
         get_confidence.return_value = None
         get_targets.return_value = [(1, "episode-id", "Episode", "20250310", 2)]
@@ -1376,13 +1380,13 @@ class MainTriggerFlowTests(unittest.TestCase):
             conn,
             "https://www.youtube.com/@TheStandupPodClips/videos",
             kind="clip",
-            limit=5,
+            limit=None,
         )
         process_source.assert_any_call(
             conn,
             "https://www.youtube.com/@TheStandupPodClips/shorts",
             kind="short",
-            limit=5,
+            limit=None,
         )
 
 

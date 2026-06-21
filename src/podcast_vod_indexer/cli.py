@@ -63,7 +63,8 @@ DEEP_VOD_PROMPT_TIMEOUT_SECONDS = 30
 CLIP_KIND = "clip"
 SHORT_KIND = "short"
 CLIP_VIDEO_KINDS = [CLIP_KIND, SHORT_KIND]
-CLIP_SOURCE_LIMIT = 5
+CLIP_SOURCE_LIMIT = None
+SHORT_SOURCE_LIMIT = None
 CLIP_TRANSCRIPT_LIMIT = 5
 SHORT_TRANSCRIPT_LIMIT = 5
 CLIP_MATCH_METHOD = "transcript_clip_to_long_or_episode_window"
@@ -474,7 +475,11 @@ def run_clip_matching(
     clips = get_videos_with_segments_by_kinds(conn, CLIP_VIDEO_KINDS)
     episode_targets = None
 
-    for clip_id, _, clip_title, clip_upload_date in clips:
+    for clip_id, _, clip_kind, clip_title, clip_upload_date in clips:
+        match_log_prefix = (
+            "short-match" if clip_kind == SHORT_KIND else "clip-match"
+        )
+        clip_label = "Short" if clip_kind == SHORT_KIND else "Clip"
         existing_confidence = get_clip_match_confidence_for_clip(
             conn,
             clip_id,
@@ -485,7 +490,7 @@ def run_clip_matching(
             and existing_confidence >= MATCH_CONFIDENCE_CUTOFF
         ):
             print(
-                f"[clip-match] Skipping: {clip_title} "
+                f"[{match_log_prefix}] Skipping: {clip_title} "
                 f"({existing_confidence * 100:.2f}%)"
             )
             continue
@@ -495,7 +500,7 @@ def run_clip_matching(
             and clip_id not in new_clip_transcript_ids
         ):
             print(
-                f"[clip-match] Skipping low-confidence candidate: "
+                f"[{match_log_prefix}] Skipping low-confidence candidate: "
                 f"{clip_title} "
                 f"({existing_confidence * 100:.2f}%, no new evidence)"
             )
@@ -515,7 +520,10 @@ def run_clip_matching(
             or target[3] <= clip_upload_date
         ]
         if not targets_to_search:
-            print(f"[clip-match] No episode candidates for: {clip_title}")
+            print(
+                f"[{match_log_prefix}] No episode candidates for: "
+                f"{clip_title}"
+            )
             continue
 
         clip_segments = get_segments_for_video(conn, clip_id)
@@ -524,7 +532,7 @@ def run_clip_matching(
         best_start_seconds = None
         best_score = -1.0
 
-        print(f"[clip-match] Clip: {clip_title}")
+        print(f"[{match_log_prefix}] {clip_label}: {clip_title}")
 
         for (
             episode_id,
@@ -1003,7 +1011,7 @@ def main(argv: list[str] | None = None) -> None:
             conn,
             short_source_url,
             kind=SHORT_KIND,
-            limit=CLIP_SOURCE_LIMIT,
+            limit=SHORT_SOURCE_LIMIT,
         )
 
         transcript_fetches = fetch_missing_transcripts_with_budget(

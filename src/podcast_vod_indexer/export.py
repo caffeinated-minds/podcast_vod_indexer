@@ -44,11 +44,9 @@ def multi_link_cell(serialized_links: str | None) -> str:
     links = []
     for item in serialized_links.split(CLIP_ITEM_SEPARATOR):
         title, url = item.split(CLIP_FIELD_SEPARATOR, 1)
-        links.append(
-            f"<div>{link_cell(url, title, new_tab=True)}</div>"
-        )
+        links.append(link_cell(url, title, new_tab=True))
 
-    return "".join(links)
+    return ", ".join(links)
 
 
 def render_rows(rows: list[tuple]) -> str:

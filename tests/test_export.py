@@ -93,6 +93,11 @@ class ExportHtmlTests(unittest.TestCase):
         self.assertIn("Clip A", html)
         self.assertIn("Clip B", html)
         self.assertIn("Short A", html)
+        self.assertIn(
+            '</a>, <a href="https://example.com/clip-b"',
+            html,
+        )
+        self.assertNotIn("<div>", html)
         self.assertIn('target="_blank" rel="noopener noreferrer"', html)
 
 
