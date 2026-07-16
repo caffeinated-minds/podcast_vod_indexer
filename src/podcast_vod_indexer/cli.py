@@ -8,11 +8,8 @@ from podcast_vod_indexer.db import (
     get_videos_without_segments_by_kind,
     get_videos_with_segments_by_kind,
     get_videos_with_segments_by_kind_and_date,
-    get_videos_with_segments_by_kinds,
-    get_clip_episode_match_targets,
     get_segments_for_video,
     get_match_confidence_for_episode,
-    get_clip_match_confidence_for_clip,
     get_episode_long_match_for_episode,
     get_excluded_long_episode_ids,
     get_first_episode_matched_vod_date,
@@ -22,7 +19,6 @@ from podcast_vod_indexer.db import (
     remove_non_distinct_long_episode_matches,
     upsert_match,
     upsert_episode_long_match,
-    upsert_clip_match,
 )
 from podcast_vod_indexer.youtube import (
     get_latest_videos,
@@ -31,7 +27,6 @@ from podcast_vod_indexer.youtube import (
     TranscriptRateLimitError,
 )
 from podcast_vod_indexer.matching import (
-    find_clip_transcript_match,
     find_best_window_match,
     find_best_window_pair_match,
     find_long_episode_transcript_match,
@@ -60,14 +55,6 @@ DEEP_VOD_EPISODE_STEP_SECONDS = 5 * 60
 DEEP_VOD_STEP_SECONDS = 60
 DEEP_VOD_TOP_CANDIDATES = 5
 DEEP_VOD_PROMPT_TIMEOUT_SECONDS = 30
-CLIP_KIND = "clip"
-SHORT_KIND = "short"
-CLIP_VIDEO_KINDS = [CLIP_KIND, SHORT_KIND]
-CLIP_SOURCE_LIMIT = None
-SHORT_SOURCE_LIMIT = None
-CLIP_TRANSCRIPT_LIMIT = 5
-SHORT_TRANSCRIPT_LIMIT = 5
-CLIP_MATCH_METHOD = "transcript_clip_to_long_or_episode_window"
 
 
 @dataclass
@@ -75,8 +62,6 @@ class TranscriptFetchResults:
     episode_ids: set[int] = field(default_factory=set)
     long_episode_ids: set[int] = field(default_factory=set)
     vod_ids: set[int] = field(default_factory=set)
-    clip_ids: set[int] = field(default_factory=set)
-    short_ids: set[int] = field(default_factory=set)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -226,8 +211,6 @@ def fetch_missing_transcripts_with_budget(
     vod_limit: int,
     episode_limit: int,
     long_episode_limit: int,
-    clip_limit: int,
-    short_limit: int,
     vod_min_upload_date: str | None = None,
 ) -> TranscriptFetchResults:
     results = TranscriptFetchResults()
@@ -248,18 +231,6 @@ def fetch_missing_transcripts_with_budget(
         kind="vod",
         limit=200,
         min_upload_date=vod_min_upload_date,
-    )
-
-    clip_videos = get_videos_without_segments_by_kind(
-        conn,
-        kind=CLIP_KIND,
-        limit=100,
-    )
-
-    short_videos = get_videos_without_segments_by_kind(
-        conn,
-        kind=SHORT_KIND,
-        limit=100,
     )
 
     episode_fetch_completed, results.episode_ids = fetch_transcripts_for_videos(
@@ -295,24 +266,6 @@ def fetch_missing_transcripts_with_budget(
     if not vod_fetch_completed:
         return results
 
-    (
-        clip_fetch_completed,
-        results.clip_ids,
-    ) = fetch_transcripts_for_videos(
-        conn,
-        kind=CLIP_KIND,
-        videos=clip_videos,
-        limit=clip_limit,
-    )
-    if not clip_fetch_completed:
-        return results
-
-    _, results.short_ids = fetch_transcripts_for_videos(
-        conn,
-        kind=SHORT_KIND,
-        videos=short_videos,
-        limit=short_limit,
-    )
     return results
 
 
@@ -464,136 +417,6 @@ def run_matching(
                 )
         else:
             print("  -> no candidate found")
-
-
-def run_clip_matching(
-    conn,
-    *,
-    new_clip_transcript_ids: set[int] | None = None,
-) -> None:
-    new_clip_transcript_ids = new_clip_transcript_ids or set()
-    clips = get_videos_with_segments_by_kinds(conn, CLIP_VIDEO_KINDS)
-    episode_targets = None
-
-    for clip_id, _, clip_kind, clip_title, clip_upload_date in clips:
-        match_log_prefix = (
-            "short-match" if clip_kind == SHORT_KIND else "clip-match"
-        )
-        clip_label = "Short" if clip_kind == SHORT_KIND else "Clip"
-        existing_confidence = get_clip_match_confidence_for_clip(
-            conn,
-            clip_id,
-        )
-
-        if (
-            existing_confidence is not None
-            and existing_confidence >= MATCH_CONFIDENCE_CUTOFF
-        ):
-            print(
-                f"[{match_log_prefix}] Skipping: {clip_title} "
-                f"({existing_confidence * 100:.2f}%)"
-            )
-            continue
-
-        if (
-            existing_confidence is not None
-            and clip_id not in new_clip_transcript_ids
-        ):
-            print(
-                f"[{match_log_prefix}] Skipping low-confidence candidate: "
-                f"{clip_title} "
-                f"({existing_confidence * 100:.2f}%, no new evidence)"
-            )
-            continue
-
-        if episode_targets is None:
-            episode_targets = get_clip_episode_match_targets(
-                conn,
-                MATCH_CONFIDENCE_CUTOFF,
-            )
-
-        targets_to_search = [
-            target
-            for target in episode_targets
-            if clip_upload_date is None
-            or target[3] is None
-            or target[3] <= clip_upload_date
-        ]
-        if not targets_to_search:
-            print(
-                f"[{match_log_prefix}] No episode candidates for: "
-                f"{clip_title}"
-            )
-            continue
-
-        clip_segments = get_segments_for_video(conn, clip_id)
-        best_episode_id = None
-        best_matched_against_id = None
-        best_start_seconds = None
-        best_score = -1.0
-
-        print(f"[{match_log_prefix}] {clip_label}: {clip_title}")
-
-        for (
-            episode_id,
-            _,
-            episode_title,
-            _,
-            matched_against_video_id,
-        ) in targets_to_search:
-            match = find_clip_transcript_match(
-                clip_segments,
-                get_segments_for_video(conn, matched_against_video_id),
-            )
-            if match is None:
-                continue
-
-            if match["score"] > best_score:
-                best_episode_id = episode_id
-                best_matched_against_id = matched_against_video_id
-                best_start_seconds = match["start"]
-                best_score = match["score"]
-                print(
-                    f"  -> best so far: {episode_title} "
-                    f"({best_score * 100:.2f}%)"
-                )
-
-        if (
-            existing_confidence is not None
-            and best_score <= existing_confidence
-        ):
-            print(
-                f"  -> kept existing candidate "
-                f"({existing_confidence * 100:.2f}%)"
-            )
-            continue
-
-        if (
-            best_episode_id is None
-            or best_matched_against_id is None
-            or best_start_seconds is None
-        ):
-            print("  -> no candidate found")
-            continue
-
-        upsert_clip_match(
-            conn,
-            clip_video_id=clip_id,
-            episode_video_id=best_episode_id,
-            matched_against_video_id=best_matched_against_id,
-            matched_start_seconds=best_start_seconds,
-            confidence=best_score,
-            match_method=CLIP_MATCH_METHOD,
-        )
-        conn.commit()
-
-        if best_score >= MATCH_CONFIDENCE_CUTOFF:
-            print(f"  -> stored match ({best_score * 100:.2f}%)")
-        else:
-            print(
-                f"  -> stored low-confidence candidate "
-                f"({best_score * 100:.2f}%)"
-            )
 
 
 def run_deep_vod_matching(
@@ -947,8 +770,6 @@ def main(argv: list[str] | None = None) -> None:
         "https://www.youtube.com/playlist?"
         "list=PLnO2sUspiA2b-gmVb-khiLa2NoQ7mHzZ-"
     )
-    clip_source_url = "https://www.youtube.com/@TheStandupPodClips/videos"
-    short_source_url = "https://www.youtube.com/@TheStandupPodClips/shorts"
 
     init_db()
 
@@ -1001,26 +822,12 @@ def main(argv: list[str] | None = None) -> None:
         )
         process_source(conn, episode_source_url, kind="episode")
         process_source(conn, long_episode_source_url, kind="episode_long")
-        process_source(
-            conn,
-            clip_source_url,
-            kind=CLIP_KIND,
-            limit=CLIP_SOURCE_LIMIT,
-        )
-        process_source(
-            conn,
-            short_source_url,
-            kind=SHORT_KIND,
-            limit=SHORT_SOURCE_LIMIT,
-        )
 
         transcript_fetches = fetch_missing_transcripts_with_budget(
             conn,
             vod_limit=2,
             episode_limit=2,
             long_episode_limit=2,
-            clip_limit=CLIP_TRANSCRIPT_LIMIT,
-            short_limit=SHORT_TRANSCRIPT_LIMIT,
             vod_min_upload_date=vod_min_upload_date,
         )
 
@@ -1042,13 +849,6 @@ def main(argv: list[str] | None = None) -> None:
             newly_long_matched_episode_ids -= (
                 get_excluded_long_episode_match_ids(conn)
             )
-
-        run_clip_matching(
-            conn,
-            new_clip_transcript_ids=(
-                transcript_fetches.clip_ids | transcript_fetches.short_ids
-            ),
-        )
 
         run_matching(
             conn,

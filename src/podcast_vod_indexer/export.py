@@ -11,8 +11,6 @@ from podcast_vod_indexer.db import (
 
 OUTPUT_PATH = Path("output/index.html")
 MATCH_CONFIDENCE_CUTOFF = 0.15
-CLIP_ITEM_SEPARATOR = "\x1e"
-CLIP_FIELD_SEPARATOR = "\x1f"
 
 
 def format_time(seconds: float | None) -> str:
@@ -37,18 +35,6 @@ def link_cell(url: str, label: str, *, new_tab: bool = False) -> str:
     )
 
 
-def multi_link_cell(serialized_links: str | None) -> str:
-    if not serialized_links:
-        return ""
-
-    links = []
-    for item in serialized_links.split(CLIP_ITEM_SEPARATOR):
-        title, url = item.split(CLIP_FIELD_SEPARATOR, 1)
-        links.append(link_cell(url, title, new_tab=True))
-
-    return ", ".join(links)
-
-
 def render_rows(rows: list[tuple]) -> str:
     html_rows = []
 
@@ -56,8 +42,6 @@ def render_rows(rows: list[tuple]) -> str:
         episode_title,
         episode_url,
         episode_date,
-        clip_links,
-        short_links,
         vod_title,
         vod_url,
         vod_date,
@@ -123,8 +107,6 @@ def render_rows(rows: list[tuple]) -> str:
                 "        <td>"
                 f"{link_cell(episode_url, episode_title, new_tab=True)}</td>",
                 f"        <td>{escape(episode_date or '')}</td>",
-                f"        <td>{multi_link_cell(clip_links)}</td>",
-                f"        <td>{multi_link_cell(short_links)}</td>",
                 f"        <td>{long_episode_cell}</td>",
                 f"        <td>{vod_title_cell}</td>",
                 f"        <td>{vod_date_cell}</td>",
@@ -154,38 +136,6 @@ def export_matches_html(conn: sqlite3.Connection) -> None:
             e.title,
             e.webpage_url,
             e.upload_date,
-            (
-                SELECT GROUP_CONCAT(
-                    clip_row.title || ? || clip_row.webpage_url,
-                    ?
-                )
-                FROM (
-                    SELECT clip.title, clip.webpage_url
-                    FROM clip_matches clip_match
-                    JOIN videos clip
-                        ON clip.id = clip_match.clip_video_id
-                    WHERE clip_match.episode_video_id = e.id
-                      AND clip.kind = 'clip'
-                      AND clip_match.confidence >= ?
-                    ORDER BY clip.upload_date DESC
-                ) clip_row
-            ),
-            (
-                SELECT GROUP_CONCAT(
-                    short_row.title || ? || short_row.webpage_url,
-                    ?
-                )
-                FROM (
-                    SELECT short.title, short.webpage_url
-                    FROM clip_matches short_match
-                    JOIN videos short
-                        ON short.id = short_match.clip_video_id
-                    WHERE short_match.episode_video_id = e.id
-                      AND short.kind = 'short'
-                      AND short_match.confidence >= ?
-                    ORDER BY short.upload_date DESC
-                ) short_row
-            ),
             v.title,
             v.webpage_url,
             v.upload_date,
@@ -219,12 +169,6 @@ def export_matches_html(conn: sqlite3.Connection) -> None:
         ORDER BY e.upload_date DESC
         """,
         (
-            CLIP_FIELD_SEPARATOR,
-            CLIP_ITEM_SEPARATOR,
-            MATCH_CONFIDENCE_CUTOFF,
-            CLIP_FIELD_SEPARATOR,
-            CLIP_ITEM_SEPARATOR,
-            MATCH_CONFIDENCE_CUTOFF,
             LONG_EPISODE_DURATION_TOLERANCE_SECONDS,
         ),
     ).fetchall()

@@ -8,7 +8,6 @@ from podcast_vod_indexer.cli import (
     fetch_transcripts_for_videos,
     main,
     process_source,
-    run_clip_matching,
     run_deep_vod_matching,
     run_long_episode_matching,
     run_matching,
@@ -784,133 +783,6 @@ class DeepVodMatchingTests(unittest.TestCase):
         upsert_match.assert_not_called()
 
 
-class ClipMatchingTests(unittest.TestCase):
-    @patch("podcast_vod_indexer.cli.upsert_clip_match")
-    @patch("podcast_vod_indexer.cli.find_clip_transcript_match")
-    @patch("podcast_vod_indexer.cli.get_segments_for_video")
-    @patch("podcast_vod_indexer.cli.get_clip_episode_match_targets")
-    @patch("podcast_vod_indexer.cli.get_clip_match_confidence_for_clip")
-    @patch("podcast_vod_indexer.cli.get_videos_with_segments_by_kinds")
-    def test_matches_clip_to_episode_using_long_episode_target(
-        self,
-        get_clips,
-        get_confidence,
-        get_targets,
-        get_segments,
-        find_match,
-        upsert_match,
-    ) -> None:
-        get_clips.return_value = [
-            (10, "clip-id", "clip", "Clip", "20250312")
-        ]
-        get_confidence.return_value = None
-        get_targets.return_value = [
-            (1, "episode-id", "Episode", "20250310", 2),
-            (3, "future-episode-id", "Future Episode", "20250313", 4),
-        ]
-        clip_segments = [
-            {"start": 0.0, "duration": 10.0, "text": "clip"}
-        ]
-        long_episode_segments = [
-            {"start": 0.0, "duration": 10.0, "text": "long"}
-        ]
-        get_segments.side_effect = lambda _conn, video_id: {
-            10: clip_segments,
-            2: long_episode_segments,
-        }[video_id]
-        find_match.return_value = {
-            "start": 120.0,
-            "end": 180.0,
-            "score": 0.22,
-        }
-        conn = MagicMock()
-
-        run_clip_matching(conn, new_clip_transcript_ids={10})
-
-        find_match.assert_called_once_with(
-            clip_segments,
-            long_episode_segments,
-        )
-        upsert_match.assert_called_once_with(
-            conn,
-            clip_video_id=10,
-            episode_video_id=1,
-            matched_against_video_id=2,
-            matched_start_seconds=120.0,
-            confidence=0.22,
-            match_method="transcript_clip_to_long_or_episode_window",
-        )
-
-    @patch("podcast_vod_indexer.cli.upsert_clip_match")
-    @patch("podcast_vod_indexer.cli.find_clip_transcript_match")
-    @patch("podcast_vod_indexer.cli.get_segments_for_video")
-    @patch("podcast_vod_indexer.cli.get_clip_episode_match_targets")
-    @patch("podcast_vod_indexer.cli.get_clip_match_confidence_for_clip")
-    @patch("podcast_vod_indexer.cli.get_videos_with_segments_by_kinds")
-    def test_skips_already_accepted_clip_match(
-        self,
-        get_clips,
-        get_confidence,
-        get_targets,
-        get_segments,
-        find_match,
-        upsert_match,
-    ) -> None:
-        get_clips.return_value = [
-            (10, "clip-id", "clip", "Clip", "20250312")
-        ]
-        get_confidence.return_value = 0.20
-
-        run_clip_matching(MagicMock())
-
-        get_targets.assert_not_called()
-        get_segments.assert_not_called()
-        find_match.assert_not_called()
-        upsert_match.assert_not_called()
-
-    @patch("podcast_vod_indexer.cli.upsert_clip_match")
-    @patch("podcast_vod_indexer.cli.find_clip_transcript_match")
-    @patch("podcast_vod_indexer.cli.get_segments_for_video")
-    @patch("podcast_vod_indexer.cli.get_clip_episode_match_targets")
-    @patch("podcast_vod_indexer.cli.get_clip_match_confidence_for_clip")
-    @patch("podcast_vod_indexer.cli.get_videos_with_segments_by_kinds")
-    def test_allows_multiple_clips_to_match_same_episode(
-        self,
-        get_clips,
-        get_confidence,
-        get_targets,
-        get_segments,
-        find_match,
-        upsert_match,
-    ) -> None:
-        get_clips.return_value = [
-            (10, "clip-one", "clip", "Clip One", "20250312"),
-            (11, "clip-two", "clip", "Clip Two", "20250312"),
-        ]
-        get_confidence.return_value = None
-        get_targets.return_value = [(1, "episode-id", "Episode", "20250310", 2)]
-        get_segments.return_value = [
-            {"start": 0.0, "duration": 10.0, "text": "transcript"}
-        ]
-        find_match.return_value = {
-            "start": 120.0,
-            "end": 180.0,
-            "score": 0.22,
-        }
-        conn = MagicMock()
-
-        run_clip_matching(conn, new_clip_transcript_ids={10, 11})
-
-        self.assertEqual(upsert_match.call_count, 2)
-        self.assertEqual(
-            [
-                call.kwargs["episode_video_id"]
-                for call in upsert_match.call_args_list
-            ],
-            [1, 1],
-        )
-
-
 class TranscriptFetchTriggerTests(unittest.TestCase):
     @patch("podcast_vod_indexer.cli.time.sleep")
     @patch("podcast_vod_indexer.cli.insert_segments")
@@ -950,8 +822,6 @@ class TranscriptFetchTriggerTests(unittest.TestCase):
             (True, {1}),
             (True, {2}),
             (True, {3}),
-            (True, {4}),
-            (True, {5}),
         ]
 
         results = fetch_missing_transcripts_with_budget(
@@ -959,15 +829,11 @@ class TranscriptFetchTriggerTests(unittest.TestCase):
             vod_limit=2,
             episode_limit=2,
             long_episode_limit=2,
-            clip_limit=5,
-            short_limit=5,
         )
 
         self.assertEqual(results.episode_ids, {1})
         self.assertEqual(results.long_episode_ids, {2})
         self.assertEqual(results.vod_ids, {3})
-        self.assertEqual(results.clip_ids, {4})
-        self.assertEqual(results.short_ids, {5})
 
 
 class NewlyAcceptedLongMatchTests(unittest.TestCase):
@@ -1244,7 +1110,6 @@ class MainTriggerFlowTests(unittest.TestCase):
     @patch("podcast_vod_indexer.cli.export_matches_html")
     @patch("podcast_vod_indexer.cli.run_deep_vod_matching")
     @patch("podcast_vod_indexer.cli.run_matching")
-    @patch("podcast_vod_indexer.cli.run_clip_matching")
     @patch("podcast_vod_indexer.cli.run_long_episode_matching")
     @patch("podcast_vod_indexer.cli.fetch_missing_transcripts_with_budget")
     @patch("podcast_vod_indexer.cli.process_source")
@@ -1263,7 +1128,6 @@ class MainTriggerFlowTests(unittest.TestCase):
         process_source,
         fetch_transcripts,
         run_long_matching,
-        run_clip_matching,
         run_vod_matching,
         run_deep_matching,
         export_html,
@@ -1283,14 +1147,12 @@ class MainTriggerFlowTests(unittest.TestCase):
         process_source.assert_not_called()
         fetch_transcripts.assert_not_called()
         run_long_matching.assert_not_called()
-        run_clip_matching.assert_not_called()
         run_vod_matching.assert_not_called()
         remove_non_distinct_matches.assert_not_called()
         prune_vods.assert_not_called()
 
     @patch("podcast_vod_indexer.cli.export_matches_html")
     @patch("podcast_vod_indexer.cli.run_matching")
-    @patch("podcast_vod_indexer.cli.run_clip_matching")
     @patch("podcast_vod_indexer.cli.run_long_episode_matching")
     @patch("podcast_vod_indexer.cli.fetch_missing_transcripts_with_budget")
     @patch("podcast_vod_indexer.cli.process_source")
@@ -1311,7 +1173,6 @@ class MainTriggerFlowTests(unittest.TestCase):
         process_source,
         fetch_transcripts,
         run_long_matching,
-        run_clip_matching,
         run_vod_matching,
         export_html,
     ) -> None:
@@ -1325,14 +1186,11 @@ class MainTriggerFlowTests(unittest.TestCase):
             episode_ids={1},
             long_episode_ids={2},
             vod_ids={10},
-            clip_ids={20},
-            short_ids={30},
         )
         run_long_matching.return_value = {1}
         order = MagicMock()
         order.attach_mock(fetch_transcripts, "fetch_transcripts")
         order.attach_mock(run_long_matching, "run_long_matching")
-        order.attach_mock(run_clip_matching, "run_clip_matching")
         order.attach_mock(run_vod_matching, "run_vod_matching")
 
         main([])
@@ -1342,7 +1200,6 @@ class MainTriggerFlowTests(unittest.TestCase):
             [
                 "fetch_transcripts",
                 "run_long_matching",
-                "run_clip_matching",
                 "run_vod_matching",
             ],
         )
@@ -1357,17 +1214,11 @@ class MainTriggerFlowTests(unittest.TestCase):
             new_episode_transcript_ids={1},
             new_long_episode_transcript_ids={2},
         )
-        run_clip_matching.assert_called_once_with(
-            conn,
-            new_clip_transcript_ids={20, 30},
-        )
         fetch_transcripts.assert_called_once_with(
             conn,
             vod_limit=2,
             episode_limit=2,
             long_episode_limit=2,
-            clip_limit=5,
-            short_limit=5,
             vod_min_upload_date="20250305",
         )
         process_source.assert_any_call(
@@ -1375,18 +1226,6 @@ class MainTriggerFlowTests(unittest.TestCase):
             "https://www.youtube.com/@ThePrimeTimeagen/streams",
             kind="vod",
             min_upload_date="20250305",
-        )
-        process_source.assert_any_call(
-            conn,
-            "https://www.youtube.com/@TheStandupPodClips/videos",
-            kind="clip",
-            limit=None,
-        )
-        process_source.assert_any_call(
-            conn,
-            "https://www.youtube.com/@TheStandupPodClips/shorts",
-            kind="short",
-            limit=None,
         )
 
 
