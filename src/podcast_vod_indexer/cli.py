@@ -1,5 +1,6 @@
 from podcast_vod_indexer.db import (
     LONG_EPISODE_DURATION_TOLERANCE_SECONDS,
+    delete_episode_long_vod_matches_for_long_episode_ids,
     init_db,
     get_connection,
     insert_video,
@@ -11,14 +12,17 @@ from podcast_vod_indexer.db import (
     get_segments_for_video,
     get_match_confidence_for_episode,
     get_episode_long_match_for_episode,
+    get_episode_long_vod_match_confidence,
     get_excluded_long_episode_ids,
     get_first_episode_matched_vod_date,
     get_excluded_long_episode_match_ids,
+    get_linked_long_episode_ids,
     get_matched_long_episode_ids,
     prune_vods_before_date,
     remove_non_distinct_long_episode_matches,
     upsert_match,
     upsert_episode_long_match,
+    upsert_episode_long_vod_match,
 )
 from podcast_vod_indexer.youtube import (
     get_latest_videos,
@@ -55,6 +59,7 @@ DEEP_VOD_EPISODE_STEP_SECONDS = 5 * 60
 DEEP_VOD_STEP_SECONDS = 60
 DEEP_VOD_TOP_CANDIDATES = 5
 DEEP_VOD_PROMPT_TIMEOUT_SECONDS = 30
+LONG_EPISODE_VOD_TOP_CANDIDATES = 5
 
 
 @dataclass
@@ -402,6 +407,202 @@ def run_matching(
             upsert_match(
                 conn,
                 episode_video_id=episode_id,
+                vod_video_id=best_vod_id,
+                matched_start_seconds=best_window_start,
+                confidence=best_score,
+            )
+            conn.commit()
+
+            if best_score >= MATCH_CONFIDENCE_CUTOFF:
+                print(f"  -> stored match ({best_score * 100:.2f}%)")
+            else:
+                print(
+                    f"  -> stored low-confidence candidate "
+                    f"({best_score * 100:.2f}%)"
+                )
+        else:
+            print("  -> no candidate found")
+
+
+def run_long_episode_vod_matching(
+    conn,
+    *,
+    new_vod_transcript_ids: set[int] | None = None,
+    new_long_episode_transcript_ids: set[int] | None = None,
+    vod_min_upload_date: str | None = None,
+) -> None:
+    new_vod_transcript_ids = new_vod_transcript_ids or set()
+    new_long_episode_transcript_ids = new_long_episode_transcript_ids or set()
+    linked_long_episode_ids = get_linked_long_episode_ids(conn)
+    removed_linked_matches = (
+        delete_episode_long_vod_matches_for_long_episode_ids(
+            conn,
+            linked_long_episode_ids,
+        )
+    )
+    if removed_linked_matches:
+        print(
+            "[long-vod-match] Removed "
+            f"{removed_linked_matches} fallback match(es) now linked to "
+            "normal episodes"
+        )
+        conn.commit()
+
+    long_episodes = [
+        long_episode
+        for long_episode in get_videos_with_segments_by_kind_and_date(
+            conn,
+            "episode_long",
+        )
+        if long_episode[0] not in linked_long_episode_ids
+    ]
+    if not long_episodes:
+        return
+
+    vods = get_videos_with_segments_by_kind_and_date(
+        conn,
+        "vod",
+        min_upload_date=vod_min_upload_date,
+    )
+
+    for (
+        long_episode_id,
+        _,
+        long_episode_title,
+        long_episode_upload_date,
+    ) in long_episodes:
+        existing_confidence = get_episode_long_vod_match_confidence(
+            conn,
+            long_episode_id,
+        )
+
+        if (
+            existing_confidence is not None
+            and existing_confidence >= MATCH_SKIP_CONFIDENCE_CUTOFF
+        ):
+            print(
+                f"[long-vod-match] Skipping: {long_episode_title} "
+                f"({existing_confidence * 100:.2f}%)"
+            )
+            continue
+
+        if (
+            existing_confidence is not None
+            and not new_vod_transcript_ids
+            and long_episode_id not in new_long_episode_transcript_ids
+        ):
+            print(
+                f"[long-vod-match] Skipping low-confidence candidate: "
+                f"{long_episode_title} "
+                f"({existing_confidence * 100:.2f}%, no new evidence)"
+            )
+            continue
+
+        vods_to_search = [
+            vod
+            for vod in vods
+            if (
+                long_episode_upload_date is None
+                or vod[3] is None
+                or vod[3] <= long_episode_upload_date
+            )
+        ]
+        if (
+            existing_confidence is not None
+            and new_vod_transcript_ids
+            and long_episode_id not in new_long_episode_transcript_ids
+        ):
+            vods_to_search = [
+                vod for vod in vods_to_search
+                if vod[0] in new_vod_transcript_ids
+            ]
+
+        if not vods_to_search:
+            continue
+
+        long_episode_segments = get_segments_for_video(conn, long_episode_id)
+        long_episode_tokens = transcript_tokens(long_episode_segments)
+        ranked_vods_to_search = []
+        for vod in vods_to_search:
+            vod_segments = get_segments_for_video(conn, vod[0])
+            ranked_vods_to_search.append(
+                {
+                    "vod": vod,
+                    "segments": vod_segments,
+                    "rank_score": token_overlap_score(
+                        long_episode_tokens,
+                        transcript_tokens(vod_segments),
+                    ),
+                }
+            )
+        ranked_vods_to_search.sort(
+            key=lambda candidate: candidate["rank_score"],
+            reverse=True,
+        )
+
+        best_vod_id = None
+        best_vod_segments = None
+        best_score = -1.0
+        best_window_start = None
+
+        print(f"[long-vod-match] Long episode: {long_episode_title}")
+
+        for candidate in ranked_vods_to_search[:LONG_EPISODE_VOD_TOP_CANDIDATES]:
+            vod_id = candidate["vod"][0]
+            vod_segments = candidate["segments"]
+            match = find_best_window_match(
+                long_episode_segments,
+                vod_segments,
+                window_seconds=900.0,
+                step_seconds=300.0,
+            )
+
+            if match is None:
+                continue
+
+            if match["score"] > best_score:
+                best_score = match["score"]
+                best_vod_id = vod_id
+                best_vod_segments = vod_segments
+                best_window_start = match["start"]
+                if best_score >= MATCH_CONFIDENCE_CUTOFF:
+                    break
+
+        if (
+            best_vod_id is not None
+            and best_vod_segments is not None
+            and best_window_start is not None
+            and best_score < MATCH_CONFIDENCE_CUTOFF
+        ):
+            refined_match = refine_low_confidence_window_match(
+                long_episode_segments,
+                best_vod_segments,
+                coarse_start_seconds=best_window_start,
+                window_seconds=900.0,
+                search_radius_seconds=300.0,
+                step_seconds=60.0,
+            )
+
+            if refined_match is not None and refined_match["score"] > best_score:
+                best_score = refined_match["score"]
+                best_window_start = refined_match["start"]
+                print(
+                    f"  -> refined low-confidence match "
+                    f"({best_score * 100:.2f}%)"
+                )
+
+        if (
+            existing_confidence is not None
+            and best_score <= existing_confidence
+        ):
+            print(
+                f"  -> kept stronger existing candidate "
+                f"({existing_confidence * 100:.2f}%)"
+            )
+        elif best_vod_id is not None and best_window_start is not None:
+            upsert_episode_long_vod_match(
+                conn,
+                long_episode_video_id=long_episode_id,
                 vod_video_id=best_vod_id,
                 matched_start_seconds=best_window_start,
                 confidence=best_score,
@@ -854,6 +1055,12 @@ def main(argv: list[str] | None = None) -> None:
             conn,
             new_vod_transcript_ids=transcript_fetches.vod_ids,
             newly_long_matched_episode_ids=newly_long_matched_episode_ids,
+            vod_min_upload_date=vod_min_upload_date,
+        )
+        run_long_episode_vod_matching(
+            conn,
+            new_vod_transcript_ids=transcript_fetches.vod_ids,
+            new_long_episode_transcript_ids=transcript_fetches.long_episode_ids,
             vod_min_upload_date=vod_min_upload_date,
         )
         export_matches_html(conn)

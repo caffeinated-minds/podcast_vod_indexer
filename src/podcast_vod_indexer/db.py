@@ -81,6 +81,20 @@ def init_db() -> None:
             """
         )
 
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS episode_long_vod_matches (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                long_episode_video_id INTEGER UNIQUE,
+                vod_video_id INTEGER,
+                matched_start_seconds REAL,
+                confidence REAL,
+                FOREIGN KEY(long_episode_video_id) REFERENCES videos(id),
+                FOREIGN KEY(vod_video_id) REFERENCES videos(id)
+            )
+            """
+        )
+
         columns = {
             row[1]
             for row in conn.execute(
@@ -223,6 +237,21 @@ def get_episode_long_match_for_episode(
     return (row[0], row[1]) if row else None
 
 
+def get_episode_long_vod_match_confidence(
+    conn, long_episode_video_id: int
+) -> float | None:
+    row = conn.execute(
+        """
+        SELECT confidence
+        FROM episode_long_vod_matches
+        WHERE long_episode_video_id = ?
+        """,
+        (long_episode_video_id,),
+    ).fetchone()
+
+    return row[0] if row else None
+
+
 def get_first_episode_matched_vod_date(
     conn,
     min_confidence: float,
@@ -253,8 +282,16 @@ def prune_vods_before_date(conn, min_upload_date: str) -> tuple[int, int]:
     referenced_count = conn.execute(
         """
         SELECT COUNT(*)
-        FROM matches match
-        JOIN videos vod ON vod.id = match.vod_video_id
+        FROM (
+            SELECT match.vod_video_id AS vod_video_id
+            FROM matches match
+
+            UNION
+
+            SELECT long_match.vod_video_id AS vod_video_id
+            FROM episode_long_vod_matches long_match
+        ) referenced_match
+        JOIN videos vod ON vod.id = referenced_match.vod_video_id
         WHERE vod.kind = 'vod'
           AND vod.upload_date < ?
         """,
@@ -346,6 +383,43 @@ def get_excluded_long_episode_ids(conn) -> set[int]:
     ).fetchall()
 
     return {row[0] for row in rows}
+
+
+def get_linked_long_episode_ids(conn) -> set[int]:
+    rows = conn.execute(
+        """
+        SELECT long_episode_video_id
+        FROM episode_long_matches
+        WHERE long_episode_video_id IS NOT NULL
+
+        UNION
+
+        SELECT long_episode_video_id
+        FROM episode_long_exclusions
+        WHERE long_episode_video_id IS NOT NULL
+        """
+    ).fetchall()
+
+    return {row[0] for row in rows}
+
+
+def delete_episode_long_vod_matches_for_long_episode_ids(
+    conn,
+    long_episode_video_ids: set[int],
+) -> int:
+    if not long_episode_video_ids:
+        return 0
+
+    placeholders = ", ".join("?" for _ in long_episode_video_ids)
+    cursor = conn.execute(
+        f"""
+        DELETE FROM episode_long_vod_matches
+        WHERE long_episode_video_id IN ({placeholders})
+        """,
+        tuple(long_episode_video_ids),
+    )
+
+    return cursor.rowcount
 
 
 def get_video_durations_by_kind(conn, kind: str) -> dict[int, int]:
@@ -546,3 +620,33 @@ def upsert_episode_long_match(
         ),
     )
 
+
+def upsert_episode_long_vod_match(
+    conn,
+    long_episode_video_id: int,
+    vod_video_id: int,
+    matched_start_seconds: float,
+    confidence: float,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO episode_long_vod_matches (
+            long_episode_video_id,
+            vod_video_id,
+            matched_start_seconds,
+            confidence
+        )
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(long_episode_video_id)
+        DO UPDATE SET
+            vod_video_id = excluded.vod_video_id,
+            matched_start_seconds = excluded.matched_start_seconds,
+            confidence = excluded.confidence
+        """,
+        (
+            long_episode_video_id,
+            vod_video_id,
+            matched_start_seconds,
+            confidence,
+        ),
+    )

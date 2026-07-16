@@ -3,15 +3,19 @@ import unittest
 from unittest.mock import patch
 
 from podcast_vod_indexer.db import (
+    delete_episode_long_vod_matches_for_long_episode_ids,
+    get_episode_long_vod_match_confidence,
     get_excluded_long_episode_ids,
     get_excluded_long_episode_match_ids,
     get_first_episode_matched_vod_date,
+    get_linked_long_episode_ids,
     get_video_durations_by_kind,
     get_videos_with_segments_by_kind,
     get_videos_without_segments_by_kind,
     init_db,
     prune_vods_before_date,
     remove_non_distinct_long_episode_matches,
+    upsert_episode_long_vod_match,
 )
 
 
@@ -39,6 +43,7 @@ class DatabaseSchemaTests(unittest.TestCase):
         self.assertNotIn("spotify_episodes", tables)
         self.assertNotIn("spotify_matches", tables)
         self.assertIn("episode_long_exclusions", tables)
+        self.assertIn("episode_long_vod_matches", tables)
         self.assertNotIn("clip_matches", tables)
         self.assertNotIn("spotify_url", video_columns)
         conn.close()
@@ -160,6 +165,163 @@ class DatabaseSchemaTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "referenced"):
             prune_vods_before_date(conn, "20250305")
 
+        conn.close()
+
+    def test_vod_cutoff_pruning_rejects_long_episode_vod_reference(self) -> None:
+        conn = sqlite3.connect(":memory:")
+
+        with patch(
+            "podcast_vod_indexer.db.get_connection",
+            return_value=conn,
+        ):
+            init_db()
+
+        conn.executemany(
+            """
+            INSERT INTO videos (id, youtube_id, kind, upload_date)
+            VALUES (?, ?, ?, ?)
+            """,
+            [
+                (1, "long-episode", "episode_long", "20250306"),
+                (2, "old-vod", "vod", "20250304"),
+            ],
+        )
+        conn.execute(
+            """
+            INSERT INTO episode_long_vod_matches (
+                long_episode_video_id, vod_video_id,
+                matched_start_seconds, confidence
+            )
+            VALUES (1, 2, 0, 0.20)
+            """
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "referenced"):
+            prune_vods_before_date(conn, "20250305")
+
+        conn.close()
+
+    def test_upserts_long_episode_vod_match(self) -> None:
+        conn = sqlite3.connect(":memory:")
+
+        with patch(
+            "podcast_vod_indexer.db.get_connection",
+            return_value=conn,
+        ):
+            init_db()
+
+        upsert_episode_long_vod_match(
+            conn,
+            long_episode_video_id=10,
+            vod_video_id=20,
+            matched_start_seconds=120.0,
+            confidence=0.20,
+        )
+        upsert_episode_long_vod_match(
+            conn,
+            long_episode_video_id=10,
+            vod_video_id=30,
+            matched_start_seconds=240.0,
+            confidence=0.30,
+        )
+
+        self.assertEqual(
+            get_episode_long_vod_match_confidence(conn, 10),
+            0.30,
+        )
+        self.assertEqual(
+            conn.execute(
+                """
+                SELECT long_episode_video_id, vod_video_id,
+                       matched_start_seconds, confidence
+                FROM episode_long_vod_matches
+                """
+            ).fetchall(),
+            [(10, 30, 240.0, 0.30)],
+        )
+        conn.close()
+
+    def test_linked_long_episode_ids_include_matches_and_exclusions(
+        self,
+    ) -> None:
+        conn = sqlite3.connect(":memory:")
+
+        with patch(
+            "podcast_vod_indexer.db.get_connection",
+            return_value=conn,
+        ):
+            init_db()
+
+        conn.executemany(
+            """
+            INSERT INTO episode_long_matches (
+                short_episode_video_id,
+                long_episode_video_id,
+                confidence
+            )
+            VALUES (?, ?, ?)
+            """,
+            [
+                (1, 10, 0.20),
+                (2, 20, 0.10),
+            ],
+        )
+        conn.execute(
+            """
+            INSERT INTO episode_long_exclusions (
+                short_episode_video_id,
+                long_episode_video_id,
+                reason
+            )
+            VALUES (3, 30, 'equivalent_duration')
+            """
+        )
+
+        self.assertEqual(get_linked_long_episode_ids(conn), {10, 20, 30})
+        conn.close()
+
+    def test_deletes_long_episode_vod_matches_for_linked_long_episodes(
+        self,
+    ) -> None:
+        conn = sqlite3.connect(":memory:")
+
+        with patch(
+            "podcast_vod_indexer.db.get_connection",
+            return_value=conn,
+        ):
+            init_db()
+
+        conn.executemany(
+            """
+            INSERT INTO episode_long_vod_matches (
+                long_episode_video_id,
+                vod_video_id,
+                matched_start_seconds,
+                confidence
+            )
+            VALUES (?, ?, 0, 0.20)
+            """,
+            [
+                (10, 100),
+                (20, 200),
+            ],
+        )
+
+        deleted = delete_episode_long_vod_matches_for_long_episode_ids(
+            conn,
+            {10},
+        )
+
+        self.assertEqual(deleted, 1)
+        self.assertEqual(
+            conn.execute(
+                """
+                SELECT long_episode_video_id, vod_video_id
+                FROM episode_long_vod_matches
+                """
+            ).fetchall(),
+            [(20, 200)],
+        )
         conn.close()
 
     def test_removes_non_distinct_long_episode_matches(self) -> None:
