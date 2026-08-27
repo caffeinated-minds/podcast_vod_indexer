@@ -17,3 +17,6 @@ data/*.db
 data/*.db-*
 data/*.sqlite
 data/*.sqlite-*
+
+# Local planning notes
+local-notes/

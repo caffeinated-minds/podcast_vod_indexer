@@ -1,4 +1,8 @@
 from podcast_vod_indexer.backup import backup_database
+from podcast_vod_indexer.artifacts import (
+    PublicArtifactValidationError,
+    validate_public_artifacts,
+)
 from podcast_vod_indexer.db import (
     LONG_EPISODE_DURATION_TOLERANCE_SECONDS,
     delete_episode_long_vod_matches_for_long_episode_ids,
@@ -40,6 +44,7 @@ from podcast_vod_indexer.matching import (
     transcript_tokens,
 )
 from podcast_vod_indexer.export import export_matches_html
+from podcast_vod_indexer.publish import PublishError, publish_public_artifacts
 
 import argparse
 from collections.abc import Callable
@@ -61,6 +66,15 @@ DEEP_VOD_STEP_SECONDS = 60
 DEEP_VOD_TOP_CANDIDATES = 5
 DEEP_VOD_PROMPT_TIMEOUT_SECONDS = 30
 LONG_EPISODE_VOD_TOP_CANDIDATES = 5
+VOD_SOURCE_URL = "https://www.youtube.com/@ThePrimeTimeagen/streams"
+EPISODE_SOURCE_URL = (
+    "https://www.youtube.com/playlist?"
+    "list=PL2Fq-K0QdOQiJpufsnhEd1z3xOv2JMHuk"
+)
+LONG_EPISODE_SOURCE_URL = (
+    "https://www.youtube.com/playlist?"
+    "list=PLnO2sUspiA2b-gmVb-khiLa2NoQ7mHzZ-"
+)
 
 
 @dataclass
@@ -70,8 +84,7 @@ class TranscriptFetchResults:
     vod_ids: set[int] = field(default_factory=set)
 
 
-def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser()
+def add_run_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--deep-vod-match",
         "--deep-vod-matching",
@@ -82,7 +95,66 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "episode matches without fetching new data."
         ),
     )
-    return parser.parse_args(argv)
+    parser.add_argument(
+        "--publish",
+        action="store_true",
+        help=(
+            "Commit and push changed files from output/ after a successful "
+            "local run so GitHub Pages can deploy them."
+        ),
+    )
+    parser.add_argument(
+        "--no-publish",
+        action="store_false",
+        dest="publish",
+        help="Run locally without committing or pushing public artifacts.",
+    )
+    parser.set_defaults(publish=False)
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser()
+    add_run_arguments(parser)
+
+    subparsers = parser.add_subparsers(dest="command")
+
+    run_parser = subparsers.add_parser(
+        "run",
+        help="Run local sync, matching, export, backup, and optional publish.",
+    )
+    add_run_arguments(run_parser)
+
+    subparsers.add_parser(
+        "backup-db",
+        help="Create a verified local SQLite backup and checksum.",
+    )
+
+    validate_parser = subparsers.add_parser(
+        "validate-public-artifacts",
+        help="Validate files that are safe to publish from output/.",
+    )
+    validate_parser.add_argument(
+        "path",
+        nargs="?",
+        default="output",
+        help="Public artifact directory to validate.",
+    )
+
+    publish_parser = subparsers.add_parser(
+        "publish",
+        help="Commit and push changed files from output/.",
+    )
+    publish_parser.add_argument(
+        "--message",
+        default="Update generated public index",
+        help="Git commit message to use when public artifacts changed.",
+    )
+
+    args = parser.parse_args(argv)
+    if args.command is None:
+        args.command = "run"
+
+    return args
 
 
 def confirm_continue_deep_vod_search(
@@ -961,18 +1033,7 @@ def run_long_episode_matching(
     return newly_accepted_short_episode_ids
 
 
-def main(argv: list[str] | None = None) -> None:
-    args = parse_args(argv)
-    vod_source_url = "https://www.youtube.com/@ThePrimeTimeagen/streams"
-    episode_source_url = (
-        "https://www.youtube.com/playlist?"
-        "list=PL2Fq-K0QdOQiJpufsnhEd1z3xOv2JMHuk"
-    )
-    long_episode_source_url = (
-        "https://www.youtube.com/playlist?"
-        "list=PLnO2sUspiA2b-gmVb-khiLa2NoQ7mHzZ-"
-    )
-
+def run_pipeline(*, deep_vod_match: bool = False, publish: bool = False) -> None:
     init_db()
 
     with get_connection() as conn:
@@ -981,95 +1042,166 @@ def main(argv: list[str] | None = None) -> None:
             MATCH_CONFIDENCE_CUTOFF,
         )
 
-        if args.deep_vod_match:
+        if deep_vod_match:
             run_deep_vod_matching(
                 conn,
                 vod_min_upload_date=vod_min_upload_date,
             )
             export_matches_html(conn)
             conn.commit()
-            backup_result = backup_database()
-            print(f"[backup] Wrote {backup_result.database_path}")
-            print("Done")
-            return
-
-        removed_non_distinct_matches = (
-            remove_non_distinct_long_episode_matches(conn)
-        )
-        if removed_non_distinct_matches:
-            print(
-                "[long-episode-match] Removed "
-                f"{removed_non_distinct_matches} match(es) where the long "
-                "episode was not more than "
-                f"{LONG_EPISODE_DURATION_TOLERANCE_SECONDS} seconds longer"
+        else:
+            removed_non_distinct_matches = (
+                remove_non_distinct_long_episode_matches(conn)
             )
-            conn.commit()
-
-        if vod_min_upload_date is not None:
-            pruned_vods, pruned_segments = prune_vods_before_date(
-                conn,
-                vod_min_upload_date,
-            )
-            if pruned_vods:
+            if removed_non_distinct_matches:
                 print(
-                    f"[vod] Pruned {pruned_vods} VOD(s) and "
-                    f"{pruned_segments} transcript segment(s) before "
-                    f"{vod_min_upload_date}"
+                    "[long-episode-match] Removed "
+                    f"{removed_non_distinct_matches} match(es) where the long "
+                    "episode was not more than "
+                    f"{LONG_EPISODE_DURATION_TOLERANCE_SECONDS} seconds longer"
                 )
-            conn.commit()
+                conn.commit()
 
-        process_source(
-            conn,
-            vod_source_url,
-            kind="vod",
-            min_upload_date=vod_min_upload_date,
-        )
-        process_source(conn, episode_source_url, kind="episode")
-        process_source(conn, long_episode_source_url, kind="episode_long")
+            if vod_min_upload_date is not None:
+                pruned_vods, pruned_segments = prune_vods_before_date(
+                    conn,
+                    vod_min_upload_date,
+                )
+                if pruned_vods:
+                    print(
+                        f"[vod] Pruned {pruned_vods} VOD(s) and "
+                        f"{pruned_segments} transcript segment(s) before "
+                        f"{vod_min_upload_date}"
+                    )
+                conn.commit()
 
-        transcript_fetches = fetch_missing_transcripts_with_budget(
-            conn,
-            vod_limit=2,
-            episode_limit=2,
-            long_episode_limit=2,
-            vod_min_upload_date=vod_min_upload_date,
-        )
-
-        newly_long_matched_episode_ids = run_long_episode_matching(
-            conn,
-            new_episode_transcript_ids=transcript_fetches.episode_ids,
-            new_long_episode_transcript_ids=transcript_fetches.long_episode_ids,
-        )
-        removed_non_distinct_matches = (
-            remove_non_distinct_long_episode_matches(conn)
-        )
-        if removed_non_distinct_matches:
-            print(
-                "[long-episode-match] Marked "
-                f"{removed_non_distinct_matches} equivalent upload(s) "
-                "as not needed"
+            process_source(
+                conn,
+                VOD_SOURCE_URL,
+                kind="vod",
+                min_upload_date=vod_min_upload_date,
             )
-            conn.commit()
-            newly_long_matched_episode_ids -= (
-                get_excluded_long_episode_match_ids(conn)
+            process_source(conn, EPISODE_SOURCE_URL, kind="episode")
+            process_source(
+                conn,
+                LONG_EPISODE_SOURCE_URL,
+                kind="episode_long",
             )
 
-        run_matching(
-            conn,
-            new_vod_transcript_ids=transcript_fetches.vod_ids,
-            newly_long_matched_episode_ids=newly_long_matched_episode_ids,
-            vod_min_upload_date=vod_min_upload_date,
-        )
-        run_long_episode_vod_matching(
-            conn,
-            new_vod_transcript_ids=transcript_fetches.vod_ids,
-            new_long_episode_transcript_ids=transcript_fetches.long_episode_ids,
-            vod_min_upload_date=vod_min_upload_date,
-        )
-        export_matches_html(conn)
+            transcript_fetches = fetch_missing_transcripts_with_budget(
+                conn,
+                vod_limit=2,
+                episode_limit=2,
+                long_episode_limit=2,
+                vod_min_upload_date=vod_min_upload_date,
+            )
+
+            newly_long_matched_episode_ids = run_long_episode_matching(
+                conn,
+                new_episode_transcript_ids=transcript_fetches.episode_ids,
+                new_long_episode_transcript_ids=(
+                    transcript_fetches.long_episode_ids
+                ),
+            )
+            removed_non_distinct_matches = (
+                remove_non_distinct_long_episode_matches(conn)
+            )
+            if removed_non_distinct_matches:
+                print(
+                    "[long-episode-match] Marked "
+                    f"{removed_non_distinct_matches} equivalent upload(s) "
+                    "as not needed"
+                )
+                conn.commit()
+                newly_long_matched_episode_ids -= (
+                    get_excluded_long_episode_match_ids(conn)
+                )
+
+            run_matching(
+                conn,
+                new_vod_transcript_ids=transcript_fetches.vod_ids,
+                newly_long_matched_episode_ids=newly_long_matched_episode_ids,
+                vod_min_upload_date=vod_min_upload_date,
+            )
+            run_long_episode_vod_matching(
+                conn,
+                new_vod_transcript_ids=transcript_fetches.vod_ids,
+                new_long_episode_transcript_ids=(
+                    transcript_fetches.long_episode_ids
+                ),
+                vod_min_upload_date=vod_min_upload_date,
+            )
+            export_matches_html(conn)
 
         conn.commit()
 
+    validation_result = validate_public_artifacts("output")
+    print(
+        f"[validate] Public artifacts: {validation_result.file_count} "
+        "file(s)"
+    )
+
     backup_result = backup_database()
     print(f"[backup] Wrote {backup_result.database_path}")
+
+    if publish:
+        publish_result = publish_public_artifacts()
+        if publish_result.changed:
+            print(
+                "[publish] Pushed public artifact commit "
+                f"{publish_result.commit_sha}"
+            )
+        else:
+            print("[publish] No public artifact changes to publish")
+
     print("Done")
+
+
+def backup_db_command() -> None:
+    backup_result = backup_database()
+    print(f"[backup] Wrote {backup_result.database_path}")
+
+
+def validate_public_artifacts_command(path: str) -> None:
+    validation_result = validate_public_artifacts(path)
+    print(
+        f"Validated {validation_result.file_count} public artifact file(s) "
+        f"in {validation_result.root}"
+    )
+
+
+def publish_command(message: str) -> None:
+    publish_result = publish_public_artifacts(commit_message=message)
+    if publish_result.changed:
+        print(
+            "[publish] Pushed public artifact commit "
+            f"{publish_result.commit_sha}"
+        )
+    else:
+        print("[publish] No public artifact changes to publish")
+
+
+def main(argv: list[str] | None = None) -> None:
+    args = parse_args(argv)
+
+    try:
+        if args.command == "run":
+            run_pipeline(
+                deep_vod_match=args.deep_vod_match,
+                publish=args.publish,
+            )
+        elif args.command == "backup-db":
+            backup_db_command()
+        elif args.command == "validate-public-artifacts":
+            validate_public_artifacts_command(args.path)
+        elif args.command == "publish":
+            publish_command(args.message)
+        else:
+            raise SystemExit(f"Unknown command: {args.command}")
+    except (FileNotFoundError, PublicArtifactValidationError, PublishError) as error:
+        print(f"Error: {error}", file=sys.stderr)
+        raise SystemExit(1) from error
+
+
+if __name__ == "__main__":
+    main()
