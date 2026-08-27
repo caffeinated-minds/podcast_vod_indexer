@@ -1272,6 +1272,7 @@ class NewlyAcceptedLongMatchTests(unittest.TestCase):
 
 
 class MainTriggerFlowTests(unittest.TestCase):
+    @patch("podcast_vod_indexer.cli.backup_database")
     @patch("podcast_vod_indexer.cli.export_matches_html")
     @patch("podcast_vod_indexer.cli.run_deep_vod_matching")
     @patch("podcast_vod_indexer.cli.run_long_episode_vod_matching")
@@ -1298,7 +1299,9 @@ class MainTriggerFlowTests(unittest.TestCase):
         run_long_vod_matching,
         run_deep_matching,
         export_html,
+        backup_database,
     ) -> None:
+        backup_database.return_value.database_path = "backup.db"
         conn = MagicMock()
         get_connection.return_value.__enter__.return_value = conn
         get_vod_cutoff.return_value = "20250305"
@@ -1318,7 +1321,9 @@ class MainTriggerFlowTests(unittest.TestCase):
         run_long_vod_matching.assert_not_called()
         remove_non_distinct_matches.assert_not_called()
         prune_vods.assert_not_called()
+        backup_database.assert_called_once_with()
 
+    @patch("podcast_vod_indexer.cli.backup_database")
     @patch("podcast_vod_indexer.cli.export_matches_html")
     @patch("podcast_vod_indexer.cli.run_long_episode_vod_matching")
     @patch("podcast_vod_indexer.cli.run_matching")
@@ -1345,7 +1350,9 @@ class MainTriggerFlowTests(unittest.TestCase):
         run_vod_matching,
         run_long_vod_matching,
         export_html,
+        backup_database,
     ) -> None:
+        backup_database.return_value.database_path = "backup.db"
         conn = MagicMock()
         get_connection.return_value.__enter__.return_value = conn
         get_vod_cutoff.return_value = "20250305"
@@ -1399,6 +1406,7 @@ class MainTriggerFlowTests(unittest.TestCase):
             long_episode_limit=2,
             vod_min_upload_date="20250305",
         )
+        backup_database.assert_called_once_with()
         process_source.assert_any_call(
             conn,
             "https://www.youtube.com/@ThePrimeTimeagen/streams",

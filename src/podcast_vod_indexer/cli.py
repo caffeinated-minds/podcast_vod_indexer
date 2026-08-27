@@ -1,3 +1,4 @@
+from podcast_vod_indexer.backup import backup_database
 from podcast_vod_indexer.db import (
     LONG_EPISODE_DURATION_TOLERANCE_SECONDS,
     delete_episode_long_vod_matches_for_long_episode_ids,
@@ -987,6 +988,8 @@ def main(argv: list[str] | None = None) -> None:
             )
             export_matches_html(conn)
             conn.commit()
+            backup_result = backup_database()
+            print(f"[backup] Wrote {backup_result.database_path}")
             print("Done")
             return
 
@@ -1067,4 +1070,6 @@ def main(argv: list[str] | None = None) -> None:
 
         conn.commit()
 
+    backup_result = backup_database()
+    print(f"[backup] Wrote {backup_result.database_path}")
     print("Done")

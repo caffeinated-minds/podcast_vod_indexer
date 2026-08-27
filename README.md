@@ -22,7 +22,7 @@ preflight
 -> synchronize YouTube metadata and transcripts
 -> calculate new matches
 -> detect newly successful episode matches
--> create and upload a private SQLite backup
+-> create a verified local SQLite backup
 -> generate and validate the static HTML index and CSV exports
 -> deploy changed HTML and CSV artifacts
 -> verify the public page
@@ -68,26 +68,40 @@ during a logged-in desktop session so the browser keyring is available.
 ### Artifact Separation
 
 For the current MVP, this repository tracks the pipeline implementation and its
-latest generated state:
+latest public generated state:
+
+- `output/index.html` contains the latest generated public index.
+- Future `output/*.csv` files will contain public data exports.
+
+The working SQLite database remains local-only:
 
 - `data/index.db` contains collected metadata, transcripts, and match state.
-- `output/index.html` contains the latest generated public index.
+- It is ignored by Git and must not be committed.
+- Successful local runs create timestamped backups under
+  `~/gdrive/Archive/podcast-vod-indexer/`.
+- Each backup is copied through SQLite's backup API, checked with
+  `PRAGMA integrity_check`, and written with a SHA-256 checksum file.
 
-Updating these tracked files allows a push to trigger later cloud matching and
-publishing stages. Browser cookies, API credentials, logs, and temporary
-database snapshots must remain outside the repository.
+Updating tracked public artifacts allows a push to trigger publication. Browser
+cookies, API credentials, logs, and temporary database snapshots must remain
+outside the repository.
 
-Azure Static Web Apps hosts only intentionally public outputs:
+GitHub Pages hosts only intentionally public outputs:
 
 - The static HTML index.
 - CSV exports for direct data access.
 
 The HTML and CSV exports are generated from the same completed run so they
-remain consistent. The local pipeline deploys them to Azure Static Web Apps and
-verifies the public site before allowing X announcements.
+remain consistent. GitHub Actions deploys them to GitHub Pages and the local
+pipeline should verify the public site before allowing X announcements.
 
-Azure Static Web Apps deployment must include only intended public outputs. The
-tracked SQLite database must not be included in the static-site deployment.
+The GitHub Pages deployment must include only intended public outputs. The
+working SQLite database must not be included in the static-site deployment.
+
+Ignoring `data/index.db` prevents future commits from tracking the working
+database. It does not remove database blobs from old Git history. Before making
+the repository public, historical commits must be audited and cleaned if they
+contain private SQLite state.
 
 ### Credentials
 
@@ -95,8 +109,6 @@ Credentials remain local and must never be committed:
 
 - YouTube access through local browser cookies and the user keyring
 - X API credentials
-- Azure Static Web Apps deployment credentials
-- Azure DevOps credentials for private SQLite backups
 
 An `.env.example` file will document required environment variables without
 containing secrets.
@@ -126,9 +138,12 @@ The project currently:
 - Ignores and prunes VODs older than the VOD matched to the first episode.
 - Skips accepted matches and scopes uncertain-match retries to new evidence.
 - Preserves stronger existing matches when new candidates score lower.
+- Backs up the local SQLite database to
+  `~/gdrive/Archive/podcast-vod-indexer/` after successful runs.
 - Generates a static Bootstrap HTML index.
+- Includes a GitHub Pages workflow for publishing only files from `output/`.
 
-It does not yet provide the complete one-command pipeline, artifact publishing,
+It does not yet provide the complete one-command pipeline, CSV exports,
 public-page verification, X announcements, or comprehensive automated test
 coverage.
 
@@ -136,12 +151,15 @@ coverage.
 
 ### 1. Establish Safe Repository Boundaries
 
-- [x] Track the latest SQLite database and generated HTML in the repository.
+- [x] Track the latest generated HTML in the repository.
+- [x] Keep the working SQLite database local and ignored by Git.
 - [x] Keep browser cookies and API credentials out of the repository.
-- [ ] Ensure deployment publishes HTML and CSV only, never SQLite.
-- [x] Create and configure an Azure Static Web Apps resource.
-  - [Link](https://lively-flower-08252b703.7.azurestaticapps.net/)
-- [x] Create a private Azure Artifacts feed for full SQLite backups.
+- [x] Ensure deployment publishes files from `output/` only, never SQLite.
+- [x] Add a GitHub Pages project-site deployment workflow.
+- [ ] Enable GitHub Pages with GitHub Actions as the source in repository
+      settings.
+- [x] Add verified local SQLite backups under
+      `~/gdrive/Archive/podcast-vod-indexer/`.
 - [ ] Add `.env.example` with placeholder X and publishing settings.
 - [ ] Document how local state is backed up and restored.
 
@@ -171,26 +189,28 @@ coverage.
       episodes.
 - [ ] Add a dry-run mode that performs no publication or X posting.
 
-### 4. Back Up SQLite Privately
+### 4. Back Up SQLite Locally
 
-- [ ] Configure access to a private Azure Artifacts feed.
-- [ ] Create a consistent full SQLite snapshot without copying an active write.
-- [ ] Validate SQLite integrity before uploading the backup.
-- [ ] Upload each backup as a versioned Azure Artifacts Universal Package.
+- [x] Create a consistent full SQLite snapshot without copying an active write.
+- [x] Validate SQLite integrity before accepting the backup.
+- [x] Write a checksum next to each SQLite backup.
+- [x] Store backups in `~/gdrive/Archive/podcast-vod-indexer/`.
 - [ ] Define backup naming, retention, and cleanup rules.
-- [ ] Record the backup package version and result in SQLite.
+- [ ] Record the backup path and result in SQLite.
 - [ ] Test restoring a backup into a separate local path.
 
 ### 5. Publish Static HTML and CSV
 
-- [ ] Configure Azure Static Web Apps and its local deployment credentials.
+- [x] Add a GitHub Pages deployment workflow.
+- [ ] Enable GitHub Pages deployment from GitHub Actions in repository
+      settings.
 - [ ] Validate generated HTML before deployment.
 - [ ] Define useful CSV datasets, such as episodes, successful matches, and
       unmatched episodes.
 - [ ] Generate CSV files from the same completed run as the HTML.
 - [ ] Use stable CSV columns and document their meanings.
 - [ ] Validate CSV row counts against the working SQLite database.
-- [ ] Deploy only intended HTML and CSV files to Azure Static Web Apps.
+- [x] Deploy only intended files from `output/`.
 - [ ] Publish only when generated artifacts changed.
 - [ ] Record the deployed revision and publication result in SQLite.
 - [ ] Verify the public page is reachable before allowing announcements.
@@ -236,10 +256,9 @@ coverage.
 - [ ] The command can rebuild and publish from the existing local SQLite state.
 - [ ] Every publication includes matching HTML and CSV exports from the same
       run.
-- [ ] Full SQLite snapshots are stored privately and can be restored
+- [ ] Full SQLite snapshots are stored locally and can be restored
       successfully.
-- [ ] Azure Static Web Apps contains no SQLite database or private operational
-      data.
+- [ ] GitHub Pages contains no SQLite database or private operational data.
 - [ ] Reruns are idempotent and never duplicate X announcements.
 - [ ] New successful matches are published before they are announced.
 - [ ] Failed indexing never publishes or posts.
