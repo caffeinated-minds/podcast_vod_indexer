@@ -2,74 +2,30 @@
 import sys
 from pathlib import Path
 
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))
 
-ALLOWED_SUFFIXES = {
-    ".css",
-    ".csv",
-    ".html",
-    ".ico",
-    ".jpeg",
-    ".jpg",
-    ".js",
-    ".json",
-    ".png",
-    ".svg",
-    ".txt",
-    ".webp",
-    ".woff",
-    ".woff2",
-}
-
-FORBIDDEN_SUFFIXES = {
-    ".db",
-    ".env",
-    ".key",
-    ".log",
-    ".sqlite",
-    ".sqlite3",
-}
+from podcast_vod_indexer.artifacts import (  # noqa: E402
+    PublicArtifactValidationError,
+    validate_public_artifacts,
+)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = argv if argv is not None else sys.argv[1:]
     root = Path(args[0] if args else "output")
 
-    if not root.exists():
-        print(f"Public artifact directory does not exist: {root}")
-        return 1
-
-    if not root.is_dir():
-        print(f"Public artifact path is not a directory: {root}")
-        return 1
-
-    index_path = root / "index.html"
-    if not index_path.is_file():
-        print(f"Missing required public entrypoint: {index_path}")
-        return 1
-
-    files = [path for path in root.rglob("*") if path.is_file()]
-    if not files:
-        print(f"No public artifact files found in {root}")
-        return 1
-
-    errors = []
-    for path in files:
-        relative_path = path.relative_to(root)
-        suffix = path.suffix.lower()
-
-        if any(part.startswith(".") for part in relative_path.parts):
-            errors.append(f"hidden file is not allowed: {relative_path}")
-        elif suffix in FORBIDDEN_SUFFIXES:
-            errors.append(f"forbidden file type: {relative_path}")
-        elif suffix not in ALLOWED_SUFFIXES:
-            errors.append(f"unexpected file type: {relative_path}")
-
-    if errors:
-        for error in errors:
+    try:
+        result = validate_public_artifacts(root)
+    except PublicArtifactValidationError as validation_error:
+        for error in validation_error.errors:
             print(error)
         return 1
 
-    print(f"Validated {len(files)} public artifact file(s) in {root}")
+    print(
+        f"Validated {result.file_count} public artifact file(s) "
+        f"in {result.root}"
+    )
     return 0
 
 

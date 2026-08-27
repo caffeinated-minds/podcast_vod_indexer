@@ -22,9 +22,10 @@ preflight
 -> synchronize YouTube metadata and transcripts
 -> calculate new matches
 -> detect newly successful episode matches
--> create a verified local SQLite backup
 -> generate and validate the static HTML index and CSV exports
--> deploy changed HTML and CSV artifacts
+-> create a verified local SQLite backup
+-> push changed HTML and CSV artifacts
+-> GitHub Pages deploys the public site
 -> verify the public page
 -> announce newly published matches on X
 -> record results and print a run summary
@@ -53,11 +54,38 @@ The Python CLI owns the actual workflow, including stage ordering, durable
 state, retries, and failure handling. The intended primary command is:
 
 ```bash
-uv run podcast-vod-indexer run --publish --announce
+indexer run --publish
 ```
 
-A Makefile may provide memorable shortcuts such as `make run`, `make test`, and
-`make publish`, but it will not contain the pipeline's business logic.
+`indexer` is a local launcher script that enters the project directory, starts a
+small Nix shell with CA certificates, sets `SSL_CERT_FILE`, and then invokes the
+Python CLI. The launcher owns local runtime setup; the Python CLI owns pipeline
+logic.
+
+Deep VOD matching is intentionally explicit because it can be slow:
+
+```bash
+indexer run --deep-vod-match --publish
+```
+
+A Makefile may later provide memorable shortcuts such as `make run`, `make
+test`, and `make publish`, but it will not contain the pipeline's business
+logic.
+
+Useful commands:
+
+```bash
+indexer run
+indexer run --publish
+indexer run --deep-vod-match
+indexer run --deep-vod-match --publish
+indexer validate-public-artifacts
+indexer backup-db
+indexer publish
+```
+
+`publish` means "commit and push changed files from `output/`." The GitHub
+Pages workflow performs the actual hosted deployment after the push.
 
 ### Scheduling
 
@@ -142,10 +170,11 @@ The project currently:
   `~/gdrive/Archive/podcast-vod-indexer/` after successful runs.
 - Generates a static Bootstrap HTML index.
 - Includes a GitHub Pages workflow for publishing only files from `output/`.
+- Provides `run --publish` to validate, commit, and push changed public
+  artifacts after a successful local run.
 
-It does not yet provide the complete one-command pipeline, CSV exports,
-public-page verification, X announcements, or comprehensive automated test
-coverage.
+It does not yet provide CSV exports, public-page verification, X announcements,
+or comprehensive automated test coverage.
 
 ## MVP Roadmap
 
@@ -178,13 +207,18 @@ coverage.
 
 ### 3. Build the Pipeline CLI
 
-- [ ] Add explicit `sync`, `match`, `export`, `publish`, and `announce`
+- [ ] Add explicit `sync`, `match`, `export`, and `announce`
       commands.
-- [ ] Add a `run --publish --announce` command that orchestrates all stages.
-- [ ] Add a preflight stage that validates credentials, tools, paths, and
+- [x] Add a `run --publish` command that orchestrates through publication.
+- [x] Keep deep VOD matching explicit with `run --deep-vod-match`.
+- [ ] Add a `run --publish --announce` command once X support exists.
+- [x] Add a launcher script for NixOS/local runtime setup.
+- [x] Add publish safety checks for branch, remote, ignored DB state, and
+      non-output working tree changes.
+- [ ] Add a fuller preflight stage that validates credentials, tools, paths, and
       repositories.
 - [ ] Make interrupted runs resumable and reruns idempotent.
-- [ ] Return nonzero exit codes for fatal failures.
+- [x] Return nonzero exit codes for fatal validation and publication failures.
 - [ ] Print a final summary of discovered, matched, published, and announced
       episodes.
 - [ ] Add a dry-run mode that performs no publication or X posting.
@@ -211,7 +245,7 @@ coverage.
 - [ ] Use stable CSV columns and document their meanings.
 - [ ] Validate CSV row counts against the working SQLite database.
 - [x] Deploy only intended files from `output/`.
-- [ ] Publish only when generated artifacts changed.
+- [x] Publish only when generated artifacts changed.
 - [ ] Record the deployed revision and publication result in SQLite.
 - [ ] Verify the public page is reachable before allowing announcements.
 - [ ] Ensure failed or incomplete indexing runs cannot publish broken output.

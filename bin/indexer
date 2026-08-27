@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo="${PODCAST_VOD_INDEXER_REPO:-$HOME/Code/podcast_vod_indexer}"
+cd "$repo"
+
+cmd='SSL_CERT_FILE=$NIX_SSL_CERT_FILE uv run podcast-vod-indexer'
+
+for arg in "$@"; do
+    cmd+=" $(printf '%q' "$arg")"
+done
+
+exec nix-shell -p cacert --run "$cmd"

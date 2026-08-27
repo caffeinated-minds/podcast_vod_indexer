@@ -1272,6 +1272,63 @@ class NewlyAcceptedLongMatchTests(unittest.TestCase):
 
 
 class MainTriggerFlowTests(unittest.TestCase):
+    @patch("podcast_vod_indexer.cli.run_pipeline")
+    def test_default_command_runs_pipeline_without_publish(
+        self,
+        run_pipeline,
+    ) -> None:
+        main([])
+
+        run_pipeline.assert_called_once_with(
+            deep_vod_match=False,
+            publish=False,
+        )
+
+    @patch("podcast_vod_indexer.cli.run_pipeline")
+    def test_run_publish_command_runs_pipeline_with_publish(
+        self,
+        run_pipeline,
+    ) -> None:
+        main(["run", "--publish"])
+
+        run_pipeline.assert_called_once_with(
+            deep_vod_match=False,
+            publish=True,
+        )
+
+    @patch("podcast_vod_indexer.cli.run_pipeline")
+    def test_run_deep_publish_command_keeps_deep_matching_explicit(
+        self,
+        run_pipeline,
+    ) -> None:
+        main(["run", "--deep-vod-match", "--publish"])
+
+        run_pipeline.assert_called_once_with(
+            deep_vod_match=True,
+            publish=True,
+        )
+
+    @patch("podcast_vod_indexer.cli.run_pipeline")
+    def test_top_level_deep_match_flag_still_works(
+        self,
+        run_pipeline,
+    ) -> None:
+        main(["--deep-vod-match"])
+
+        run_pipeline.assert_called_once_with(
+            deep_vod_match=True,
+            publish=False,
+        )
+
+    @patch("podcast_vod_indexer.cli.publish_command")
+    def test_publish_command_dispatches_to_publish_handler(
+        self,
+        publish_command,
+    ) -> None:
+        main(["publish", "--message", "Update output"])
+
+        publish_command.assert_called_once_with("Update output")
+
     @patch("podcast_vod_indexer.cli.backup_database")
     @patch("podcast_vod_indexer.cli.export_matches_html")
     @patch("podcast_vod_indexer.cli.run_deep_vod_matching")
