@@ -12,35 +12,29 @@ This project is not intended to be published as a reusable service or run on a
 hosted CI worker. YouTube access depends on browser cookies and the local user
 keyring, so indexing runs on the machine where those credentials are available.
 
-## MVP
+## V1 MVP
 
-The MVP is a reliable local-to-public publishing pipeline that can be triggered
-with one command.
+The v1 MVP is complete. It provides a reliable local-to-public publishing
+pipeline that can be triggered with one command:
+
+```bash
+indexer run --publish
+```
 
 ```text
 preflight
 -> synchronize YouTube metadata and transcripts
 -> calculate new matches
--> detect newly successful episode matches
--> generate and validate the static HTML index and CSV exports
+-> generate and validate the static HTML index
 -> create a verified local SQLite backup
--> push changed HTML and CSV artifacts
+-> push changed public artifacts
 -> GitHub Pages deploys the public site
--> verify the public page
--> announce newly published matches on X
--> record results and print a run summary
 ```
 
-An X announcement must only be created when:
+The indexer remains local because YouTube access depends on browser credentials.
+Only the generated static site is hosted. The public project site is:
 
-- An episode receives a successful match for the first time.
-- The match meets the configured confidence threshold.
-- The generated HTML contains a stable link to the episode.
-- Publishing and public-page verification succeed.
-- The match has not previously been announced.
-
-Failed publication must prevent announcements. Failed X announcements must be
-recorded and safely retryable without creating duplicate posts.
+<https://caffeinated-minds.github.io/podcast_vod_indexer/>
 
 ## Architecture Decisions
 
@@ -68,8 +62,8 @@ Deep VOD matching is intentionally explicit because it can be slow:
 indexer run --deep-vod-match --publish
 ```
 
-A Makefile may later provide memorable shortcuts such as `make run`, `make
-test`, and `make publish`, but it will not contain the pipeline's business
+A Makefile may later provide memorable shortcuts such as `make run`,
+`make test`, and `make publish`, but it will not contain the pipeline's business
 logic.
 
 Useful commands:
@@ -84,10 +78,10 @@ indexer backup-db
 indexer publish
 ```
 
-`publish` means "commit and push changed files from `output/`." The GitHub
-Pages workflow performs the actual hosted deployment after the push.
+`publish` means "commit and push changed files from `output/`." The GitHub Pages
+workflow performs the actual hosted deployment after the push.
 
-### Scheduling
+### Future Scheduling
 
 After manual runs are reliable, a version-controlled `systemd --user` service
 and timer will invoke the same pipeline command. Scheduled runs should occur
@@ -117,11 +111,11 @@ outside the repository.
 GitHub Pages hosts only intentionally public outputs:
 
 - The static HTML index.
-- CSV exports for direct data access.
+- Future CSV exports for direct data access.
 
-The HTML and CSV exports are generated from the same completed run so they
-remain consistent. GitHub Actions deploys them to GitHub Pages and the local
-pipeline should verify the public site before allowing X announcements.
+GitHub Actions deploys the contents of `output/` to GitHub Pages. A future CSV
+export should be generated in the same completed run as the HTML so the public
+artifacts remain consistent.
 
 The GitHub Pages deployment must include only intended public outputs. The
 working SQLite database must not be included in the static-site deployment.
@@ -136,15 +130,13 @@ contain private SQLite state.
 Credentials remain local and must never be committed:
 
 - YouTube access through local browser cookies and the user keyring
-- X API credentials
 
-An `.env.example` file will document required environment variables without
-containing secrets.
+Credentials for any future external integrations must follow the same rule.
 
-### Durable State
+### Future Publication State
 
-SQLite is the source of truth for collected metadata, transcripts, matches,
-publication state, and announcement state.
+SQLite is currently the source of truth for collected metadata, transcripts, and
+matches. Publication and announcement state may be added later.
 
 The pipeline should track forward-only states similar to:
 
@@ -166,140 +158,61 @@ The project currently:
 - Ignores and prunes VODs older than the VOD matched to the first episode.
 - Skips accepted matches and scopes uncertain-match retries to new evidence.
 - Preserves stronger existing matches when new candidates score lower.
-- Backs up the local SQLite database to
-  `~/gdrive/Archive/podcast-vod-indexer/` after successful runs.
+- Backs up the local SQLite database to `~/gdrive/Archive/podcast-vod-indexer/`
+  after successful runs.
 - Generates a static Bootstrap HTML index.
 - Includes a GitHub Pages workflow for publishing only files from `output/`.
 - Provides `run --publish` to validate, commit, and push changed public
   artifacts after a successful local run.
+- Publishes the generated index at
+  <https://caffeinated-minds.github.io/podcast_vod_indexer/>.
+- Passes the automated test suite, Ruff checks, and public-artifact validation.
 
 It does not yet provide CSV exports, public-page verification, X announcements,
-or comprehensive automated test coverage.
+or scheduled execution. Those are post-MVP improvements rather than blockers for
+the completed v1 workflow.
 
-## MVP Roadmap
+## V1 Acceptance
 
-### 1. Establish Safe Repository Boundaries
+- [x] One local command synchronizes, matches, exports, backs up, and publishes.
+- [x] The command can rebuild and publish from the existing local SQLite state.
+- [x] Deep VOD matching remains an explicit opt-in operation.
+- [x] Generated public artifacts are validated before publication.
+- [x] Successful runs create integrity-checked SQLite backups with checksums.
+- [x] The working SQLite database and credentials are excluded from Git.
+- [x] Only files under `output/` are deployed publicly.
+- [x] GitHub Pages deploys automatically after changed output is pushed.
+- [x] The public project site is reachable.
+- [x] Automated tests, lint checks, and artifact validation pass.
 
-- [x] Track the latest generated HTML in the repository.
-- [x] Keep the working SQLite database local and ignored by Git.
-- [x] Keep browser cookies and API credentials out of the repository.
-- [x] Ensure deployment publishes files from `output/` only, never SQLite.
-- [x] Add a GitHub Pages project-site deployment workflow.
-- [ ] Enable GitHub Pages with GitHub Actions as the source in repository
-      settings.
-- [x] Add verified local SQLite backups under
-      `~/gdrive/Archive/podcast-vod-indexer/`.
-- [ ] Add `.env.example` with placeholder X and publishing settings.
-- [ ] Document how local state is backed up and restored.
+## Post-MVP Roadmap
 
-### 2. Define Match Success
+### Reliability
 
-- [ ] Define separate confidence thresholds for VOD and full-episode matches.
-- [ ] Distinguish successful, uncertain, and unmatched results.
-- [x] Prevent weaker reruns from replacing stronger existing matches.
-- [x] Skip repeated matching work unless relevant new transcript evidence is
-      available.
-- [ ] Add a durable record of when an episode first becomes successfully
-      matched.
-- [ ] Add stable HTML anchors for individual episodes.
-- [ ] Manually evaluate a representative sample and document acceptable
-      accuracy.
-
-### 3. Build the Pipeline CLI
-
-- [ ] Add explicit `sync`, `match`, `export`, and `announce`
-      commands.
-- [x] Add a `run --publish` command that orchestrates through publication.
-- [x] Keep deep VOD matching explicit with `run --deep-vod-match`.
-- [ ] Add a `run --publish --announce` command once X support exists.
-- [x] Add a launcher script for NixOS/local runtime setup.
-- [x] Add publish safety checks for branch, remote, ignored DB state, and
-      non-output working tree changes.
-- [ ] Add a fuller preflight stage that validates credentials, tools, paths, and
-      repositories.
-- [ ] Make interrupted runs resumable and reruns idempotent.
-- [x] Return nonzero exit codes for fatal validation and publication failures.
-- [ ] Print a final summary of discovered, matched, published, and announced
-      episodes.
-- [ ] Add a dry-run mode that performs no publication or X posting.
-
-### 4. Back Up SQLite Locally
-
-- [x] Create a consistent full SQLite snapshot without copying an active write.
-- [x] Validate SQLite integrity before accepting the backup.
-- [x] Write a checksum next to each SQLite backup.
-- [x] Store backups in `~/gdrive/Archive/podcast-vod-indexer/`.
-- [ ] Define backup naming, retention, and cleanup rules.
-- [ ] Record the backup path and result in SQLite.
 - [ ] Test restoring a backup into a separate local path.
-
-### 5. Publish Static HTML and CSV
-
-- [x] Add a GitHub Pages deployment workflow.
-- [ ] Enable GitHub Pages deployment from GitHub Actions in repository
-      settings.
-- [ ] Validate generated HTML before deployment.
-- [ ] Define useful CSV datasets, such as episodes, successful matches, and
-      unmatched episodes.
-- [ ] Generate CSV files from the same completed run as the HTML.
-- [ ] Use stable CSV columns and document their meanings.
-- [ ] Validate CSV row counts against the working SQLite database.
-- [x] Deploy only intended files from `output/`.
-- [x] Publish only when generated artifacts changed.
-- [ ] Record the deployed revision and publication result in SQLite.
-- [ ] Verify the public page is reachable before allowing announcements.
-- [ ] Ensure failed or incomplete indexing runs cannot publish broken output.
-
-### 6. Announce New Matches on X
-
-- [ ] Configure X API credentials locally.
-- [ ] Add an announcement table with unique constraints preventing duplicates.
-- [ ] Detect newly successful, published, and unannounced matches.
-- [ ] Generate posts containing the episode title and stable public index link.
-- [ ] Post only after successful publication and public-page verification.
-- [ ] Store returned X post IDs and timestamps.
-- [ ] Record failures and safely retry them on later runs.
-- [ ] Confirm dry-run output clearly shows proposed posts.
-
-### 7. Add Reliability Coverage
-
-- [ ] Add tests for title, transcript, date, and duration similarity.
-- [ ] Add tests for match selection and confidence thresholds.
-- [ ] Add tests for database upserts, migrations, and announcement uniqueness.
-- [ ] Add tests confirming static deployment contains only intended HTML and CSV
-      files.
-- [ ] Add tests for consistent SQLite backup creation and integrity validation.
-- [ ] Add tests for HTML escaping, links, and stable anchors.
+- [ ] Define backup retention and cleanup rules.
 - [ ] Add an offline end-to-end test using fixtures.
-- [ ] Back up SQLite before schema migrations or risky operations.
-- [ ] Handle YouTube rate limits and locked-keyring failures explicitly.
+- [ ] Add clearer handling for YouTube rate limits and locked-keyring failures.
+- [ ] Add a fuller preflight check for credentials, tools, paths, and Git state.
+- [ ] Print a concise final run summary.
+- [ ] Verify the deployed page automatically after publication.
 
-### 8. Add Local Automation
+### Public Data
 
-- [ ] Add a Makefile containing convenience commands only.
-- [ ] Add a version-controlled `systemd --user` service.
-- [ ] Add a version-controlled `systemd --user` timer.
+- [ ] Define and generate stable CSV exports alongside the HTML.
+- [ ] Validate CSV row counts against SQLite before publication.
+- [ ] Add stable HTML anchors for individual episodes.
+
+### Automation
+
+- [ ] Add a version-controlled `systemd --user` service and timer.
 - [ ] Confirm scheduled runs can access browser cookies and the unlocked
       keyring.
-- [ ] Confirm failures are visible through logs and do not publish or announce.
+- [ ] Make scheduled failures visible without publishing incomplete output.
 
-### 9. MVP Acceptance
+### Optional Announcements
 
-- [ ] A single local command completes sync, matching, export, publication, and
-      announcement.
-- [ ] The command can rebuild and publish from the existing local SQLite state.
-- [ ] Every publication includes matching HTML and CSV exports from the same
-      run.
-- [ ] Full SQLite snapshots are stored locally and can be restored
-      successfully.
-- [ ] GitHub Pages contains no SQLite database or private operational data.
-- [ ] Reruns are idempotent and never duplicate X announcements.
-- [ ] New successful matches are published before they are announced.
-- [ ] Failed indexing never publishes or posts.
-- [ ] Failed publication prevents posting.
-- [ ] Failed X posts are recorded and retry successfully.
-- [ ] Published episode links resolve to the intended rows.
-- [ ] Several manual and scheduled runs complete without intervention.
-
-When every acceptance item is checked, the local publishing and announcement
-workflow is considered the finished MVP.
+- [ ] Decide whether X announcements still provide enough value to implement.
+- [ ] If retained, store credentials locally and never commit them.
+- [ ] Announce only newly successful matches after deployment verification.
+- [ ] Record post IDs and failures so retries cannot create duplicates.
